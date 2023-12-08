@@ -1,0 +1,10 @@
+--extra-index-url https://pypi.ngc.nvidia.com
+torch>=2
+onnxruntime
+onnxsim
+onnx_graphsurgeon
+colored
+yacs
+tabulate
+requests
+tqdm
