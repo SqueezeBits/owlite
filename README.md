@@ -44,6 +44,10 @@ cd owlite
 pip install --extra-index-url https://pypi.ngc.nvidia.com -e .
 ```
 
+## Getting Started
+
+Please check <a href="https://squeezebits.gitbook.io/owlite/">[OwLite Documentation]</a> for user guide and troubleshooting examples.
+
 ## Contact
 
 Please contact [owlite-admin@squeezebits.com](mailto:owlite-admin@squeezebits.com) for any questions or suggestions.
