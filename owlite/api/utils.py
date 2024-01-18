@@ -1,23 +1,19 @@
-""" Utilities for api requests"""
 import os
 
 import requests
 from tqdm import tqdm
 from tqdm.utils import CallbackIOWrapper
 
-from ..logger import log
+from owlite_core.logger import log
 
 
-def upload_file_to_url(file_path: str, dst_url: str) -> requests.Response:
+def upload_file_to_url(file_path: str, dst_url: str) -> None:
     """
     Upload file to destination URL via http request.
 
     Args:
         file_path (str): path to file
         dst_url (str): url to upload
-
-    Returns:
-        requests.Response: request response
 
     Raises:
         FileNotFoundError: when file does not exists at given path
@@ -27,7 +23,7 @@ def upload_file_to_url(file_path: str, dst_url: str) -> requests.Response:
     log.info(f"Uploading {file_path}")
 
     if not os.path.exists(file_path):
-        log.error(f"Cannot upload {file_path} as it doesn't exist")
+        log.error(f"Cannot upload {file_path} as it is not found")
         raise FileNotFoundError("File not found")
 
     total = os.path.getsize(file_path)
@@ -37,18 +33,17 @@ def upload_file_to_url(file_path: str, dst_url: str) -> requests.Response:
             unit="iB",
             unit_scale=True,
             unit_divisor=1024,
-        ) as tqdm_obj:
-            reader_wrapper = CallbackIOWrapper(tqdm_obj.update, file, "read")
+        ) as progress_bar:
+            reader_wrapper = CallbackIOWrapper(progress_bar.update, file, "read")
             # pylint: disable-next=missing-timeout
             resp = requests.put(dst_url, data=reader_wrapper)
             if not resp.ok:
                 resp.raise_for_status()
 
-        log.info("Finished uploading")
-        return resp
+        log.info("Uploading done")
 
 
-def download_file_from_url(file_url: str, path_to_save: str) -> requests.Response:
+def download_file_from_url(file_url: str, path_to_save: str) -> None:
     """
     Download file from URL via http request, note that this function will overwrite a file with
     downloaded file content if a file already exists at given path.
@@ -58,16 +53,13 @@ def download_file_from_url(file_url: str, path_to_save: str) -> requests.Respons
 
         path_to_save: path to save downloaded file
 
-    Returns:
-        requests.Response: request response
-
     Raises:
         HTTPError: when request was not successful
     """
     log.info(f"Downloading file at {path_to_save}")
 
     if os.path.exists(path_to_save):
-        log.warning(f"Overwriting existing file at {path_to_save}")
+        log.warning(f"The existing file at {path_to_save} will be overwritten")
 
     resp = requests.get(file_url, stream=True)  # pylint: disable=missing-timeout
     total = int(resp.headers.get("content-length", 0))
@@ -84,5 +76,4 @@ def download_file_from_url(file_url: str, path_to_save: str) -> requests.Respons
         if not resp.ok:
             resp.raise_for_status()
 
-    log.info(f"Finished downloading to {path_to_save}")
-    return resp
+    log.info("Downloading done")

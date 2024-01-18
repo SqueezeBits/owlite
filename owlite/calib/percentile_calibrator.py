@@ -1,10 +1,15 @@
-"""Percentile calibrator"""
+from typing import TYPE_CHECKING
+
 import torch
+from torch.utils.hooks import RemovableHandle
 
-from ._histogram_calibrator import _HistogramCalibrator
+from .histogram_calibrator import HistogramCalibrator
+
+if TYPE_CHECKING:
+    from ..nn.fake_quantizer import FakeQuantizer
 
 
-class PercentileCalibrator(_HistogramCalibrator):
+class PercentileCalibrator(HistogramCalibrator):
     """Percentile Calibrator Class
 
     Attributes:
@@ -13,7 +18,7 @@ class PercentileCalibrator(_HistogramCalibrator):
 
     """
 
-    def __init__(self, quantizer, percentile: float):
+    def __init__(self, quantizer: "FakeQuantizer", percentile: float):
         """Initializes the percentile calibrator.
 
         Args:
@@ -27,31 +32,25 @@ class PercentileCalibrator(_HistogramCalibrator):
             raise ValueError("percentile must be in range [0,100]")
         self.percentile = percentile
 
-    def update(self):
+    def update(self) -> None:
         # update step_size using "percentile"
+        super().update()
+        assert isinstance(self.hook_handler, RemovableHandle)
 
         # cumsum_cuda_kernel does not have a deterministic implementation
-        _deterministic_enable = torch.are_deterministic_algorithms_enabled()
-        if _deterministic_enable:
-            torch.use_deterministic_algorithms(False)
+        _deterministic_enable_status = torch.are_deterministic_algorithms_enabled()
+        torch.use_deterministic_algorithms(False, warn_only=True)
 
-        for chn, _ in enumerate(self.quantizer.histc_bins):
-            total = self.quantizer.histogram[chn].data.sum()
-            cdf = torch.cumsum(self.quantizer.histogram[chn].data / total, 0)
+        for chn, _ in enumerate(self.histc_bins):
+            total = self.histogram[chn].data.sum()
+            cdf = torch.cumsum(self.histogram[chn].data / total, 0)
             idx = torch.searchsorted(cdf, self.percentile / 100)
-            per_max = self.quantizer.bin_edges[chn].data[idx]
+            per_max = self.bin_edges[chn].data[idx]
             self.quantizer.step_size.data[chn] = (
-                (per_max / self.quantizer.maxabs_bound)
-                .detach()
-                .to(self.quantizer.step_size.device)
+                (per_max / self.quantizer.maxabs_bound).detach().to(self.quantizer.step_size.device)
             )
 
-        # allocate to original state
-        if _deterministic_enable:
-            torch.use_deterministic_algorithms(True)
+        # allocate deterministic algorithms to original state
+        torch.use_deterministic_algorithms(_deterministic_enable_status, warn_only=True)
 
-        # delete "histogram" attritbution from quantizer
-        for key in self.set_attr_list:
-            delattr(self.quantizer, key)
-        # remove registered forward_hook.item())
-        self.hook_handler.remove()
+        self.clear_attribution()

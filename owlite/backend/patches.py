@@ -3,6 +3,8 @@
 # fmt: off
 import inspect
 import math
+import operator
+
 from collections import OrderedDict
 from dataclasses import dataclass
 from packaging import version
@@ -18,8 +20,9 @@ import torch
 import torch._dynamo
 import torch.nn.functional as F
 from torch import Tensor
+from torch.fx.node import _side_effectful_functions
 
-from ..logger import log
+from owlite_core.logger import log
 
 try:
     import diffusers
@@ -30,6 +33,9 @@ try:
     import torchvision
 except ImportError:
     torchvision = None
+
+
+_side_effectful_functions.add(operator.setitem)
 
 
 @dataclass

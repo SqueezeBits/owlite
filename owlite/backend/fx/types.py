@@ -1,4 +1,3 @@
-"""Type aliases required for the subpackage fx"""
 from typing import Union
 
 import torch

@@ -1,11 +1,11 @@
-"""Options required for configuring torch.fx.GraphModule"""
 from dataclasses import fields, is_dataclass
 from types import NoneType
 from typing import Any, Union, get_args, get_origin
 
 from yacs.config import CfgNode
 
-from ..logger import log
+from owlite_core.logger import log
+
 from .generic_type_checking import generic_isinstance
 from .load import load_json_or_yaml
 from .options_mixin import OptionsMixin

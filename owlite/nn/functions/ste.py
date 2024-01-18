@@ -1,4 +1,3 @@
-""" Quantization functions has various gradients"""
 from typing import Any
 
 import torch

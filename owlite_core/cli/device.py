@@ -2,43 +2,11 @@
 
 Provides functions to manage device connections, device managers, and settings."""
 
-import requests
-
-from ..constants import OWLITE_API_DEFAULT_TIMEOUT
+from .. import Device, DeviceManager
+from ..exceptions import DeviceError
 from ..logger import log
 from ..owlite_settings import OWLITE_SETTINGS
-
-
-def _get_devices(url: str) -> list[str]:
-    """Get connected devices list from device manager.
-
-    Args:
-        url (str) : The url of a device manager.
-
-    Raises:
-        HTTPError: When request was not successful.
-
-    Returns:
-        list[str]: A list of device names connected to device manager.
-    """
-    try:
-        response = requests.get(f"{url}/devices", timeout=OWLITE_API_DEFAULT_TIMEOUT)
-    except requests.ConnectionError as err:
-        log.error("Failed to establish a connection. Please verify the correctness of the device manager url")
-        raise err
-    except requests.exceptions.MissingSchema as err:
-        log.error(
-            "Invalid URL format. Please ensure a valid scheme (e.g., https://) "
-            "is included in the device manager's url"
-        )
-        raise err
-    if not response.ok:
-        log.error(f"Received an error from request({url}/devices):\n{response.content.decode('utf-8')}")
-        response.raise_for_status()
-
-    resp = response.json()
-    assert isinstance(resp, list)
-    return resp
+from .api.device import get_devices
 
 
 def get_device_list(url: str) -> list[str]:
@@ -51,7 +19,7 @@ def get_device_list(url: str) -> list[str]:
         list[str]: A list of device names connected to device manager.
     """
 
-    device_list = _get_devices(url)
+    device_list = get_devices(url)
     device_names: list[str] = []
     for device in device_list:
         assert isinstance(device, dict)
@@ -71,31 +39,32 @@ def add_manager(name: str, url: str) -> None:
         url (str): The url of the device manager.
 
     Raises:
-        ValueError: If the device manager name already exists.
+        DeviceError: If the device manager name already exists.
         HTTPError: If the request to the url fails.
     """
-    manager_dict = OWLITE_SETTINGS.managers
-    if manager_dict and name in manager_dict:
-        log.error(f"The device '{name}' already exists. Please change the name and try again")
-        raise ValueError(f"Invalid device name : {name}")
+    if name in OWLITE_SETTINGS.managers:
+        log.error(f"The device '{name}' already exists. Please give it a different name")
+        raise DeviceError(f"Duplicate device found: {name}")
 
-    _get_devices(url)
+    get_devices(url)
 
-    OWLITE_SETTINGS.managers = {"name": name, "url": url}
+    OWLITE_SETTINGS.add_manager(DeviceManager(name, url))
     print_manager_list()
 
 
 def print_manager_list() -> None:
     """Prints a list of added device managers"""
-    manager_dict = OWLITE_SETTINGS.managers
     connected_device = OWLITE_SETTINGS.connected_device
-    log.info("Current devices...")
-    for manager, url in manager_dict.items():
-        print(f"{manager} : {url}", end="")
-        if connected_device and manager == connected_device["name"]:
-            print(f" - connected with device: {connected_device['device']}")
-        else:
-            print("")
+    device_list = "\n".join(
+        f"{manager.name}: {manager.url}"
+        + (
+            f" -> connected to device '{connected_device.name}'"
+            if connected_device and manager.name == connected_device.manager.name
+            else ""
+        )
+        for manager in OWLITE_SETTINGS.managers.values()
+    )
+    log.info(f"Available device managers:\n{device_list}")
 
 
 def remove_manager(name: str) -> None:
@@ -105,20 +74,19 @@ def remove_manager(name: str) -> None:
         name (str): The name of the device manager to remove.
 
     Raises:
-        KeyError: If the specified device manager does not exist or is DEFAULT.
+        DeviceError: If the specified device manager does not exist or is NEST.
     """
-    if name == "DEFAULT":
+    if name == "NEST":
         log.error(f"Unable to delete the device as the device named '{name}'")
-        raise KeyError(f"Invalid device name : {name}")
-    manager_dict = OWLITE_SETTINGS.managers
-    if name not in manager_dict:
+        raise DeviceError(f"Invalid device name : {name}")
+    if name not in OWLITE_SETTINGS.managers:
         log.error(f"Unable to delete the device as the device named '{name}' does not exist")
-        raise KeyError(f"Invalid device name : {name}")
-    OWLITE_SETTINGS.managers = {"name": name}
+        raise DeviceError(f"Invalid device name : {name}")
+    OWLITE_SETTINGS.remove_manager(name)
     log.info(f"Removed the device manager: {name}")
 
     connected_device = OWLITE_SETTINGS.connected_device
-    if connected_device and name == connected_device["name"]:
+    if connected_device and name == connected_device.manager.name:
         disconnect_device()
     print_manager_list()
 
@@ -127,16 +95,16 @@ def connect_device(name: str) -> None:
     """Connects to the device in selected device manager.
 
     Raises:
-        ValueError: If the selected device manager doesn't exist.
+        DeviceError: If the selected device manager doesn't exist.
     """
-    manager_dict = OWLITE_SETTINGS.managers
-    if name not in manager_dict:
-        log.error(f"Device with name {name} does not exists. Please try 'owlite device add --name (name) --url (url)")
-        raise ValueError("Device not found")
-    log.info(f"Connects to device manager '{name}[{manager_dict[name]}]")
-    device = _select_device(manager_dict[name])
-    OWLITE_SETTINGS.connected_device = {"name": name, "url": manager_dict[name], "device": device}
-    log.info(f"Connected to device: {device}")
+    if name not in OWLITE_SETTINGS.managers:
+        log.error(f"No such device: '{name}'. Please add a device using 'owlite device add --name (name) --url (url)'")
+        raise DeviceError("Device not found")
+    manager = OWLITE_SETTINGS.managers[name]
+    assert manager.url
+    device = _select_device(manager.url)
+    OWLITE_SETTINGS.connected_device = Device(device, manager)
+    log.info(f"Connected to the device '{device}' at '{manager.name}' ({manager.url})")
 
 
 def _select_device(url: str) -> str:
@@ -149,25 +117,22 @@ def _select_device(url: str) -> str:
         str: The name of the connected device.
     """
 
-    device_list: list[str] = get_device_list(url)
+    device_list = get_device_list(url)
+    _device_list = "\n".join(f"{index}: {name}" for index, name in enumerate(device_list))
+    log.info(f"Available devices:\n{_device_list}")
 
-    message = "Device list to select...\n"
-    for index, name in enumerate(device_list):
-        message = message + f"{index}: {name}\n"
-    log.info(message.rstrip("\n"))
-
-    user_input = input("Enter the index of the device you want to select: ")
+    user_input = input("Enter the index of the device you want to connect to: ")
     try:
         index = int(user_input)
         if index not in range(len(device_list)):
             log.error(
-                f"Entered index not found. Please choose the device with index range [0, {len(device_list) - 1}])"
+                f"Index out of range. Please choose the device index within the range [0, {len(device_list) - 1}]"
             )
-            raise ValueError(f"Invalid index given : {index}")
+            raise DeviceError(f"Invalid index given : {index}")
         device = device_list[index]
     except ValueError as e:
-        log.error("Invalid input entered. Please enter a valid numeric index to select the device")
-        raise e
+        log.error(f"Please provide a valid index within the range [0, {len(device_list) - 1}]")
+        raise DeviceError(e) from e
 
     return device
 
@@ -176,11 +141,11 @@ def disconnect_device() -> None:
     """Disconnects the currently connected device, if any"""
     connected_device = OWLITE_SETTINGS.connected_device
     if connected_device is None:
-        log.warning("Disconnect cannot be processed as no connected device was found")
+        log.warning("No connected device found")
         return
     OWLITE_SETTINGS.connected_device = None
-    log.info(f"Successfully disconnected from the device {connected_device['device']}")
+    log.info(f"Disconnected from the device '{connected_device.name}'")
 
 
 CONNECTED_DEVICE = OWLITE_SETTINGS.connected_device
-OWLITE_DEVICE_NAME = CONNECTED_DEVICE["device"] if CONNECTED_DEVICE else None
+OWLITE_DEVICE_NAME = CONNECTED_DEVICE.name if CONNECTED_DEVICE else None

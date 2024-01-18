@@ -1,11 +1,10 @@
-r"""Module for serializing torch.fx.GraphModule"""
-
 import logging
 
 from tabulate import tabulate
 from torch.fx.graph_module import GraphModule
 
-from ...logger import log
+from owlite_core.logger import log
+
 from ..utils import targetstr
 from .node import get_target_module
 
@@ -42,9 +41,7 @@ def serialize(graph_module: GraphModule) -> str:
         for n in graph.nodes
     ]
 
-    serialized = tabulate(
-        node_specs, headers=["opcode", "name", "target", "args", "kwargs"]
-    )
+    serialized = tabulate(node_specs, headers=["opcode", "name", "target", "args", "kwargs"])
 
     if log.level <= logging.DEBUG:
         print(serialized)

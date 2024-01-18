@@ -1,7 +1,3 @@
-"""owlite.quant.modules
-
-Modules that utilize the quantizer
-"""
 from typing import Optional, Union
 
 import torch

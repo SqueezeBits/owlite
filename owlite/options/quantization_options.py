@@ -1,4 +1,3 @@
-"""Various option classes for setting up an OwLite project."""
 from .fake_quantizer_options import FakeQuantizerOptions
 from .options_dict import OptionsDict
 

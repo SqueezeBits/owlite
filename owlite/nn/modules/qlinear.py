@@ -1,4 +1,3 @@
-"""Quantized counterpart of torch.nn.Linear"""
 # pylint: disable=not-callable
 from typing import Optional
 

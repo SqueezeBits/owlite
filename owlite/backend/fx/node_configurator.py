@@ -1,11 +1,11 @@
-"""Configurator for applying fake quantizer options for each node in a graph"""
 from itertools import product
 from typing import Callable, Optional
 
 import torch
 from torch.fx.node import Node
 
-from ...logger import log
+from owlite_core.logger import log
+
 from ...nn import FakeQuantizer, QLinear
 from ...nn.modules import UnaryNeuralQModuleMixin, promote_to_qmodule
 from ...options.fake_quantizer_options import FakeQuantizerOptions
@@ -119,7 +119,7 @@ class NodeConfigurator:
                 f"The key 'constants' not found in the meta data of the owning graph module of {nodestr(self.node)}."
             )
 
-        for insertion_key, fake_quantizer_options in self.options.items():
+        for insertion_key, fake_quantizer_options in sorted(self.options.items(), key=lambda item: item[0]):
             module_inserter = ModuleInserter.create(self.node, insertion_key)
             if module_inserter is None:
                 continue
@@ -233,10 +233,10 @@ class CallFunctionLinearNodeConfigurator(NodeConfigurator):
             self.node.update_kwarg("bias", None)
 
         with self.node.graph.inserting_after(self.node):
-            bias_add = self.node.graph.call_function(the_function=torch.add, args=(self.node, bias_node))
+            bias_add = self.node.graph.call_function(the_function=torch.add, args=(bias_node, self.node))
 
         self.node.replace_all_uses_with(bias_add)
-        bias_add.update_arg(0, self.node)
+        bias_add.update_arg(1, self.node)
 
         _ = Edge(self.node, bias_add).insert(
             f"{self.node.name}_hidden_input_quantizer",

@@ -2,8 +2,8 @@
 # pylint: disable=unnecessary-lambda, too-few-public-methods
 from argparse import Namespace, _SubParsersAction
 
-from . import BaseOwLiteCLICommand
-from .url import delete_base_url, print_base_urls, save_base_url
+from .. import BaseOwLiteCLICommand
+from ..url import delete_base_url, print_base_urls, save_base_url
 
 
 class UrlCommands(BaseOwLiteCLICommand):

@@ -1,4 +1,3 @@
-"""Utility for loading json and yaml files"""
 import json
 import os
 from typing import Union
@@ -31,8 +30,6 @@ def load_json_or_yaml(path_or_string_literal: str) -> Union[dict, CfgNode]:
             data = CfgNode.load_cfg(path_or_string_literal)
 
     if not isinstance(data, (dict, CfgNode)):
-        raise TypeError(
-            f"Expected either dict or CfgNode, but {data} of type {type(data)} is loaded."
-        )
+        raise TypeError(f"Expected either dict or CfgNode, but {data} of type {type(data)} is loaded.")
 
     return data

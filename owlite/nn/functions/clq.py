@@ -1,4 +1,3 @@
-""" CLQ quantization forward and backward function"""
 from typing import Any
 
 import torch

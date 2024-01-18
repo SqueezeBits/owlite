@@ -1,4 +1,3 @@
-"""Tools for accessing properties of ONNX ops"""
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -87,9 +86,7 @@ class ONNXOp:
         return self._get_formal_parameter(self.schema.outputs, idx)
 
     def _get_formal_parameter(self, params: list, idx: int = 0) -> FormalONNXParameter:
-        is_last_parameter_variadic = (
-            params[-1].option == OpSchema.FormalParameterOption.Variadic
-        )
+        is_last_parameter_variadic = params[-1].option == OpSchema.FormalParameterOption.Variadic
         if not (-len(params) <= idx < len(params) or is_last_parameter_variadic):
             raise IndexError(f"{self.name}: index out of range: {idx}")
         if is_last_parameter_variadic:
@@ -105,11 +102,8 @@ class ONNXOp:
             is_optional=OpSchema.FormalParameterOption.Optional == param.option,
             is_variadic=OpSchema.FormalParameterOption.Variadic == param.option,
             is_homogeneous=param.is_homogeneous,
-            is_differentiable=OpSchema.DifferentiationCategory.Differentiable
-            == param.differentiation_category,
-            type_constraints=convert_to_np_dtypes(
-                self.type_constraints.get(param.type_str, param.type_str)
-            ),
+            is_differentiable=OpSchema.DifferentiationCategory.Differentiable == param.differentiation_category,
+            type_constraints=convert_to_np_dtypes(self.type_constraints.get(param.type_str, param.type_str)),
         )
 
 
@@ -123,11 +117,7 @@ def convert_to_np_dtypes(wrapped_type_strs: list[str]) -> list[np.dtype]:
         list[np.dtype]: the converted numpy data type.
     """
     return [
-        dtype
-        for dtype in map(
-            try_convert_to_np_dtype, map(unwrap_type_str, wrapped_type_strs)
-        )
-        if dtype is not None
+        dtype for dtype in map(try_convert_to_np_dtype, map(unwrap_type_str, wrapped_type_strs)) if dtype is not None
     ]
 
 

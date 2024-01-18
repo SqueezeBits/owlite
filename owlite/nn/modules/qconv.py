@@ -1,4 +1,3 @@
-""" Quantized counterparts of torch.nn.Conv*d"""
 from typing import Optional
 
 import torch

@@ -1,12 +1,4 @@
-"""The enumeration of available Calibrator implementations"""
 from enum import Enum
-
-from ..calib import (
-    AbsmaxCalibrator,
-    MinmaxCalibrator,
-    MSECalibrator,
-    PercentileCalibrator,
-)
 
 
 # pylint: disable=invalid-name
@@ -21,15 +13,17 @@ class PTQCalibrationType(Enum):
     @property
     def calibrator_class(self) -> type:
         """The Calibrator class corresponding to this enum value"""
+        # pylint: disable-next=import-outside-toplevel
+        from ..calib import (
+            AbsmaxCalibrator,
+            MinmaxCalibrator,
+            MSECalibrator,
+            PercentileCalibrator,
+        )
+
         return {
             "absmax": AbsmaxCalibrator,
             "percentile": PercentileCalibrator,
             "mse": MSECalibrator,
             "minmax": MinmaxCalibrator,
         }[self.name]
-
-    def __repr__(self) -> str:
-        return self.name
-
-    def __str__(self) -> str:
-        return self.name

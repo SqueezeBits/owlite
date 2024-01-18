@@ -2,11 +2,10 @@ from typing import Any, Callable, Optional, Union
 
 import requests
 
-from owlite_core.cli.device import CONNECTED_DEVICE
-from owlite_core.constants import OWLITE_API_DEFAULT_TIMEOUT, OWLITE_DEFAULT_DEVICE_MANAGER
-from owlite_core.owlite_settings import OWLITE_SETTINGS
-
-from ..logger import log
+from . import Tokens
+from .constants import OWLITE_API_DEFAULT_TIMEOUT
+from .logger import log
+from .owlite_settings import OWLITE_SETTINGS
 
 ResponseType = Union[dict, int, str, bool, list[dict]]
 
@@ -39,7 +38,7 @@ class APIBase:
         tokens = OWLITE_SETTINGS.tokens
         if tokens is not None:
             headers: dict[str, Any] = ret.get("headers", {})  # type: ignore
-            auth = {"Authorization": "Bearer " + tokens["access_token"]}
+            auth = {"Authorization": "Bearer " + tokens.access_token}
             headers.update(auth)
             ret["headers"] = headers  # type: ignore
 
@@ -76,19 +75,21 @@ class APIBase:
                     try:  # attempt refresh
                         tokens = OWLITE_SETTINGS.tokens
                         assert tokens is not None
-                        refresh_token = tokens["refresh_token"]
+                        refresh_token = tokens.refresh_token
 
-                        refresh_res = self.post("/login/refresh", json={"refresh_token": refresh_token})
+                        refresh_res = MAIN_API_BASE.post("/login/refresh", json={"refresh_token": refresh_token})
                         assert isinstance(refresh_res, dict)
 
-                        OWLITE_SETTINGS.tokens = refresh_res  # token refreshed
+                        OWLITE_SETTINGS.tokens = Tokens(
+                            refresh_res["access_token"], refresh_res["refresh_token"]
+                        )  # token refreshed
 
                         log.debug("Token refreshed, re-attempting original request")
                         i -= 1
                         continue
 
                     except Exception as e:  # refresh failed, force to login again
-                        log.error("Login session expired, please log in again by 'owlite login'")
+                        log.error("Login session expired. Please log in again using 'owlite login'")
                         OWLITE_SETTINGS.tokens = None
                         raise e
 
@@ -215,8 +216,5 @@ class APIBase:
         return self._request(request_callable)
 
 
-MAIN_API_BASE: APIBase = APIBase(OWLITE_SETTINGS.base_url["MAIN"], "OWLITE_MAIN_API_BASE")
-DEVICE_API_BASE: APIBase = APIBase(
-    CONNECTED_DEVICE["url"] if CONNECTED_DEVICE else OWLITE_DEFAULT_DEVICE_MANAGER, "OWLITE_DEVICE_API_BASE"
-)
-DOVE_API_BASE: APIBase = APIBase(OWLITE_SETTINGS.base_url["DOVE"], "OWLITE_DOVE_API_BASE")
+MAIN_API_BASE: APIBase = APIBase(OWLITE_SETTINGS.base_url.MAIN, "OWLITE_MAIN_API_BASE")
+DOVE_API_BASE: APIBase = APIBase(OWLITE_SETTINGS.base_url.DOVE, "OWLITE_DOVE_API_BASE")

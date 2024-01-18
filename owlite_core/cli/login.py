@@ -6,12 +6,11 @@ Includes functions for handling OwLite user authentication.
 import re
 from getpass import getpass
 
-from requests import HTTPError
-
+from .. import Tokens
 from ..logger import log
 from ..owlite_settings import OWLITE_SETTINGS
-from .login_api import login as _login
-from .login_api import whoami
+from .api.login import login as _login
+from .api.login import whoami
 
 
 def login() -> None:
@@ -21,8 +20,8 @@ def login() -> None:
         HTTPError: When login request was not successful.
     """
 
-    def _check_email(email: str) -> bool:
-        """Checks integrity of email using RegEx.
+    def _is_valid_email(email: str) -> bool:
+        """Checks if the email is valid.
 
         Args:
             email (str): A email to check.
@@ -32,12 +31,12 @@ def login() -> None:
         """
         regex = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
         if not re.fullmatch(regex, email):
-            log.error("Invalid ID(email) provided. Please enter email format")
+            log.error("Invalid email provided")
             return False
         return True
 
-    def _check_password(password: str) -> bool:
-        r"""Check if given password fulfills password condition.
+    def _is_valid_password(password: str) -> bool:
+        r"""Check if the password is valid.
 
         Args:
             password (str): A password to check.
@@ -49,37 +48,31 @@ def login() -> None:
         regex = r"^(?=.*[!@#$%^&*()_+\-=\[\]{}|~₩])[A-Za-z0-9!@#$%^&*()_+\-=\[\]{}|~₩]{8,}$"
         if not re.match(regex, password):
             log.error(
-                "Invalid password provided. "
-                "Please enter Minimum eight characters, at least one letter, "
-                f"one number and one special character among {allowed_specials}"
+                "The password does not meet the requirement. A valid password must contain at least eight characters, "
+                "including one or more alphabetic, numeric, and special characters. "
+                f"Special characters must be chosen from {allowed_specials}"
             )
             return False
         return True
 
-    email = input("Enter your ID(e-mail): ")
-    if not _check_email(email):
+    email = input("Enter your email: ")
+    if not _is_valid_email(email):
         return
     password = getpass("Enter your password: ")
-    if not _check_password(password):
+    if not _is_valid_password(password):
         return
 
-    try:
-        tokens = _login(email, password)
-    except HTTPError:
-        return
+    resp = _login(email, password)
+    tokens = Tokens(access_token=resp["access_token"], refresh_token=resp["refresh_token"])
     OWLITE_SETTINGS.tokens = tokens
 
-    username = whoami()
-    log.info(f"Currently logged in as : {username}")
-    log.info(f"Your authentication token has been saved to {OWLITE_SETTINGS.path_tokens}")
+    userinfo = whoami()
+    log.info(f"Logged in as {userinfo.name}")
+    log.info(f"Your authentication token is saved at {OWLITE_SETTINGS.tokens_cache}")
+    log.debug(f"Saved tokens: \n\t\taccess token= '{tokens.access_token}'\n\t\trefresh token= '{tokens.refresh_token}'")
 
 
 def logout() -> None:
     """Logout from OwLite, tokens are deleted from the machine."""
-    tokens = OWLITE_SETTINGS.tokens
-    if tokens is None:
-        log.error("This device is not logged in")
-        return
-
     OWLITE_SETTINGS.tokens = None
     log.info("Successfully logged out")

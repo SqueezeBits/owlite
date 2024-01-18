@@ -1,9 +1,9 @@
-""" Util classes using at quantized modules"""
 from typing import Optional
 
 import torch
 
-from ...logger import log
+from owlite_core.logger import log
+
 from ..fake_quantizer import FakeQuantizer
 
 
@@ -20,11 +20,11 @@ class UnaryNeuralQModuleMixin:
     input_quantizer: Optional[FakeQuantizer]
     weight_quantizer: Optional[FakeQuantizer]
 
-    def _set_zero_bias(self):
+    def _set_zero_bias(self) -> None:
         """makes bias with zero tensor"""
-        raise NotImplementedError
+        raise NotImplementedError()
 
-    def check_folding_condition(self):
+    def check_folding_condition(self) -> bool:
         """checks quantized class can folding in bias.
 
         Verify that input and weight quantizers satisfy the folding condition.
@@ -37,8 +37,7 @@ class UnaryNeuralQModuleMixin:
             return False
         if self.input_quantizer.symmetric:
             log.debug_warning(
-                "Trying to folding zero point to bias "
-                f"though symmetric quantization({self.input_quantizer})",
+                f"Trying to folding zero point to bias though symmetric quantization({self.input_quantizer})",
                 stacklevel=2,
             )
             return False
@@ -53,7 +52,7 @@ class UnaryNeuralQModuleMixin:
             raise RuntimeError("Asymmetric weight quantization is not supported")
         return True
 
-    def clip_weight(self):
+    def clip_weight(self) -> None:
         """Clips the weights with narrow range.
 
         If the weight quantizer exists and narrow range is True, clip the weight values to fit the narrow range.
@@ -65,31 +64,23 @@ class UnaryNeuralQModuleMixin:
         if torch.jit.is_tracing():
             log.error("Trying to clipping range a module in tracing(torch.jit.trace)")
             log.error(self)
-            raise RuntimeError(
-                "Trying to clipping range a module in tracing(torch.jit.trace)"
-            )
+            raise RuntimeError("Trying to clipping range a module in tracing(torch.jit.trace)")
         if self.weight_quantizer is None:
             return
         if not self.weight_quantizer.narrow:
-            log.debug(
-                "Trying to clipping range a module with the weight quantizer that is not a narrow range."
-            )
+            log.debug("Trying to clipping range a module with the weight quantizer that is not a narrow range.")
             log.debug(self.weight_quantizer)
             return
+        # convert all step_size to be positive
+        self.weight_quantizer.step_size.data = self.weight_quantizer.step_size.data.abs()
 
-        clip_min_values = (
-            self.weight_quantizer.quant_min
-        ) * self.weight_quantizer.step_size.data
-        clip_max_values = (
-            self.weight_quantizer.quant_max
-        ) * self.weight_quantizer.step_size.data
+        clip_min_values = (self.weight_quantizer.quant_min) * self.weight_quantizer.step_size.data
+        clip_max_values = (self.weight_quantizer.quant_max) * self.weight_quantizer.step_size.data
         shape = [-1, *[1 for _ in range(self.weight.dim() - 1)]]
-        self.weight.data = self.weight.data.clip(
-            clip_min_values.reshape(shape), clip_max_values.reshape(shape)
-        )
+        self.weight.data = self.weight.data.clip(clip_min_values.reshape(shape), clip_max_values.reshape(shape))
         return
 
-    def fold_input_quantizer_zero_point_to_bias(self):
+    def fold_input_quantizer_zero_point_to_bias(self) -> None:
         """Folds precomputing quantized term to bias"""
         if self.input_quantizer is None:
             return
@@ -97,8 +88,7 @@ class UnaryNeuralQModuleMixin:
             return
         if self.input_quantizer.is_zero_point_folded:
             log.debug_warning(
-                "Trying to folding zero point to bias "
-                f"though it's already folded({self.input_quantizer})",
+                f"Trying to folding zero point to bias though it's already folded({self.input_quantizer})",
                 stacklevel=2,
             )
             return
@@ -107,14 +97,12 @@ class UnaryNeuralQModuleMixin:
         if self.bias is None:
             self._set_zero_bias()
         weight_dim = list(range(1, self.weight.dim()))  # assume channel dim is 0
-        precomputed = (
-            self.weight.data.sum(dim=weight_dim) * self.input_quantizer.zero_point
-        )
+        precomputed = self.weight.data.sum(dim=weight_dim) * self.input_quantizer.zero_point
         if self.bias is not None:
             self.bias.data = self.bias.data + precomputed
         self.input_quantizer.is_zero_point_folded = True
 
-    def unfold_input_quantizer_zero_point_to_bias(self):
+    def unfold_input_quantizer_zero_point_to_bias(self) -> None:
         """Unfolds precomputing quantized term from bias"""
         if self.input_quantizer is None or self.weight_quantizer is None:
             return
@@ -123,9 +111,7 @@ class UnaryNeuralQModuleMixin:
         if self.bias is None:
             log.error("Trying to folding zero point to bias with no bias module.")
             log.error(f"{self}")
-            raise ValueError(
-                "Trying to folding zero point to bias with no bias module."
-            )
+            raise ValueError("Trying to folding zero point to bias with no bias module.")
         if not self.input_quantizer.is_zero_point_folded:
             log.warning(
                 f"Trying to folding zero point to bias though it's already folded({self.input_quantizer})",
@@ -133,17 +119,14 @@ class UnaryNeuralQModuleMixin:
             )
             return
         with torch.no_grad():
-            non_channel_dims = list(
-                range(1, self.weight.dim())
-            )  # assume channel dim is 0
+            non_channel_dims = list(range(1, self.weight.dim()))  # assume channel dim is 0
             precomputed = (
-                self.weight_quantizer(self.weight.data).sum(dim=non_channel_dims)
-                * self.input_quantizer.zero_point
+                self.weight_quantizer(self.weight.data).sum(dim=non_channel_dims) * self.input_quantizer.zero_point
             )
             self.bias.data = self.bias.data - precomputed
         self.input_quantizer.is_zero_point_folded = False
 
-    def enable(self, status=True):
+    def enable(self, status: bool = True) -> None:
         """Enables or disables the quantizer.
 
         Args:
@@ -154,6 +137,6 @@ class UnaryNeuralQModuleMixin:
         if self.weight_quantizer is not None:
             self.weight_quantizer.enable(status)
 
-    def disable(self):
+    def disable(self) -> None:
         """Disables quantizers"""
         self.enable(False)

@@ -1,14 +1,9 @@
 import json
 from pathlib import Path
-from typing import Optional, cast
+from typing import Optional
 
-from . import owlite_cache_dir, read_text
-from .constants import (
-    OWLITE_DEFAULT_DEVICE_MANAGER,
-    OWLITE_DOVE_API_BASE_URL,
-    OWLITE_FRONT_BASE_URL,
-    OWLITE_MAIN_API_BASE_URL,
-)
+from . import BaseURLs, ClassDecoder, ClassEncoder, Device, DeviceManager, Tokens, owlite_cache_dir, read_text
+from .constants import NEST_URL
 
 
 class OwLiteSettings:
@@ -29,144 +24,130 @@ class OwLiteSettings:
         """
         Path(owlite_cache_dir).mkdir(parents=True, exist_ok=True)
 
-        self.path_tokens = Path(owlite_cache_dir) / "tokens"
-        self.path_devices = Path(owlite_cache_dir) / "devices"
-        self.path_connected = Path(owlite_cache_dir) / "connected"
-        self.path_url = Path(owlite_cache_dir) / "urls"
+        self.tokens_cache = Path(owlite_cache_dir) / "tokens"
+        self.devices_cache = Path(owlite_cache_dir) / "devices"
+        self.connected_cache = Path(owlite_cache_dir) / "connected"
+        self.urls_cache = Path(owlite_cache_dir) / "urls"
 
     @property
-    def tokens(self) -> Optional[dict[str, str]]:
-        """Retrieves a token or None if it doesn't exist.
+    def tokens(self) -> Optional[Tokens]:
+        """Retrieves tokens or None if they don't exist.
 
         Returns:
-            Optional[dict[str,str]]: dict of access token and refresh token, None if the tokens don't exist.
+            Optional[Tokens]: An instance of Tokens representing the access token and refresh token,
+            or None if the tokens don't exist.
         """
-        read_tokens = read_text(self.path_tokens)
+        read_tokens = read_text(self.tokens_cache)
         if not read_tokens:
             return None
-        return cast(dict[str, str], json.loads(read_tokens))
+        return json.loads(read_tokens, cls=ClassDecoder)
 
     @tokens.setter
-    def tokens(self, new_tokens: Optional[dict[str, str]]) -> None:
-        """Set new tokens or remove existing tokens.
+    def tokens(self, new_tokens: Optional[Tokens]) -> None:
+        """Sets new tokens or removes existing tokens.
 
         Args:
-            new_tokens (Optional[dict[str, str]]): Dictionary containing access token and refresh token.
-                If None, existing tokens will be removed.
+            new_tokens (Optional[Tokens]): An instance of Tokens representing the new access token and refresh token.
+            If None, existing tokens will be removed.
         """
         if new_tokens:
-            self.path_tokens.write_text(
-                json.dumps(
-                    {
-                        "access_token": new_tokens["access_token"],
-                        "refresh_token": new_tokens["refresh_token"],
-                    }
-                ),
-                encoding="utf-8",
-            )
+            self.tokens_cache.write_text(json.dumps(new_tokens, cls=ClassEncoder), encoding="utf-8")
         else:
-            self.path_tokens.unlink(missing_ok=True)
+            self.tokens_cache.unlink(missing_ok=True)
 
     @property
-    def managers(self) -> dict[str, str]:
-        """Retrieves the device manager dictionary or None if it doesn't exist.
+    def managers(self) -> dict[str, DeviceManager]:
+        """Retrieves the device manager dictionary.
 
         Returns:
-            dict[str, str]: Device manager dictionary,
+            dict[str, DeviceManager]: Device manager dictionary,
         """
-        cached_managers = read_text(self.path_devices)
-        default_manager = {"DEFAULT": OWLITE_DEFAULT_DEVICE_MANAGER}
-        if cached_managers:
-            return dict(default_manager, **cast(dict[str, str], json.loads(cached_managers)))
-        return default_manager
+        cache_content = read_text(self.devices_cache)
+        if cache_content:
+            cached_managers: dict[str, DeviceManager] = json.loads(cache_content, cls=ClassDecoder)
+            assert cached_managers
+            return cached_managers
 
-    @managers.setter
-    def managers(self, manager: dict[str, str]) -> None:
-        """Saves a device manager or removes a device manager
+        default_manager = DeviceManager("NEST", NEST_URL)
+        default_dict = {"NEST": default_manager}
+        assert isinstance(default_dict, dict)
+        return default_dict
+
+    def add_manager(self, manager: DeviceManager) -> None:
+        """Adds new device to the cache
 
         Args:
-            name (str): The name of the device manager.
-            url (str): The url of the device manager.
+            manager (DeviceManager): a new manager
         """
-        if "url" in manager:
-            manager_dict = self.managers
-            manager_dict[manager["name"]] = manager["url"]
-            self.path_devices.write_text(json.dumps(manager_dict), encoding="utf-8")
-        else:
-            manager_dict = self.managers
-            manager_dict.pop(manager["name"], None)
-            self.path_devices.write_text(json.dumps(manager_dict), encoding="utf-8")
+        manager_dict = self.managers
+        manager_dict[manager.name] = manager
+        self.devices_cache.write_text(json.dumps(manager_dict, cls=ClassEncoder), encoding="utf-8")
+
+    def remove_manager(self, name: str) -> None:
+        """Removes an existing device manager from the cache
+
+        Args:
+            name (str): the name of the manager to remove
+        """
+        manager_dict = self.managers
+        manager_dict.pop(name, None)
+        self.devices_cache.write_text(json.dumps(manager_dict, cls=ClassEncoder), encoding="utf-8")
 
     @property
-    def connected_device(self) -> Optional[dict[str, str]]:
+    def connected_device(self) -> Optional[Device]:
         """Retrieves the connected device.
 
         Returns:
-            dict[str, str], optional: A dict containing the device manager's name, url and selected device,
+            Device, optional: An instance representing the device manager's name, url and selected device,
             or None if no device is selected.
         """
-        connected_device = read_text(self.path_connected)
+        connected_device = read_text(self.connected_cache)
         if connected_device:
-            return cast(dict[str, str], json.loads(connected_device))
+            device = json.loads(connected_device, cls=ClassDecoder)
+            return device
         return None
 
     @connected_device.setter
-    def connected_device(self, device: Optional[dict[str, str]] = None) -> None:
-        """Connects to the device manager and selects device or deletes a device setting from storage.
+    def connected_device(self, device: Optional[Device] = None) -> None:
+        """Connects to the device manager and selects a device or deletes a device setting from storage.
 
         Does not fail if the device does not exist.
 
         Args:
-            device (dict[str, str]): The name, url, device of the device manager to connect.
+            device (Device): The instance representing the device manager's name, url, and device to connect.
         """
         if device:
-            self.path_connected.write_text(json.dumps(device), encoding="utf-8")
+            self.connected_cache.write_text(json.dumps(device, cls=ClassEncoder), encoding="utf-8")
         else:
-            self.path_connected.unlink(missing_ok=True)
+            self.connected_cache.unlink(missing_ok=True)
 
     @property
-    def base_url(self) -> dict[str, str]:
+    def base_url(self) -> BaseURLs:
         """Retrieves base URLs.
 
-        Returns the base URLs including FRONT, MAIN, and DOVE if available.
-        If no custom URLs are set, default OwLite base URLs are returned.
+        Returns the base URLs including FRONT, MAIN, and DOVE.
+        If no custom URLs are set, it defaults to OwLite base URLs.
 
         Returns:
-            dict[str, str]: Dictionary containing base URLs.
+            BaseURLs: an instance of BaseURLs.
         """
-        default_urls = {
-            "FRONT": OWLITE_FRONT_BASE_URL,
-            "MAIN": OWLITE_MAIN_API_BASE_URL,
-            "DOVE": OWLITE_DOVE_API_BASE_URL,
-        }
-        base_urls = read_text(self.path_url)
+        base_urls = read_text(self.urls_cache)
         if not base_urls:
-            return default_urls
-        url_dict = json.loads(base_urls)
-        return dict(default_urls, **url_dict)
+            return BaseURLs()
+        return json.loads(base_urls, cls=ClassDecoder)
 
     @base_url.setter
-    def base_url(self, base_url: dict[str, str]) -> None:
-        """Set or remove custom base URLs.
+    def base_url(self, base_urls: BaseURLs) -> None:
+        """Sets or removes custom base URLs.
 
         Args:
-            base_url (dict[str, str]):
-                Dictionary containing the 'name' and 'url' keys to set or remove custom base URLs.
+            base_urls (BaseURLs): An instance of BaseURLs to set or remove custom base URLs.
 
         Raises:
-            ValueError: If the provided 'base_url' dictionary is invalid or incomplete.
+            ValueError: If the provided 'base_urls' instance is invalid or incomplete.
         """
 
-        if "url" in base_url:
-            url_dict = self.base_url
-            url_dict[base_url["name"]] = base_url["url"]
-            self.path_url.write_text(json.dumps(url_dict))
-        else:
-            url_dict = self.base_url
-            if not url_dict:
-                return
-            url_dict.pop(base_url["name"])
-            self.path_url.write_text(json.dumps(url_dict))
+        self.urls_cache.write_text(json.dumps(base_urls, cls=ClassEncoder))
 
 
 OWLITE_SETTINGS = OwLiteSettings()

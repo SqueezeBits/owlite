@@ -1,13 +1,10 @@
-"""Utility for retrieving ONNX op schemas"""
 from collections import defaultdict
 
 from onnx import defs
 from onnx.defs import ONNX_ML_DOMAIN, OpSchema
 
 
-def get_full_operator_schemas() -> (
-    list[tuple[str, list[tuple[int, list[tuple[str, OpSchema, list[OpSchema]]]]]]]
-):
+def get_full_operator_schemas() -> list[tuple[str, list[tuple[int, list[tuple[str, OpSchema, list[OpSchema]]]]]]]:
     """parse full operator schemas
 
     Returns:
@@ -15,17 +12,13 @@ def get_full_operator_schemas() -> (
             available op schemas
     """
     # domain -> support level -> name -> [schema]
-    index: dict[str, dict[int, dict[str, list[OpSchema]]]] = defaultdict(
-        lambda: defaultdict(lambda: defaultdict(list))
-    )
+    index: dict[str, dict[int, dict[str, list[OpSchema]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     for schema in defs.get_all_schemas_with_history():
         index[schema.domain][int(schema.support_level)][schema.name].append(schema)
 
     # Preprocess the Operator Schemas
     # [(domain, [(support_level, [(schema name, current schema, all versions schemas)])])]
-    operator_schemas: list[
-        tuple[str, list[tuple[int, list[tuple[str, OpSchema, list[OpSchema]]]]]]
-    ] = []
+    operator_schemas: list[tuple[str, list[tuple[int, list[tuple[str, OpSchema, list[OpSchema]]]]]]] = []
     existing_ops: set[str] = set()
     for domain, _supportmap in sorted(index.items()):
         if domain == ONNX_ML_DOMAIN:

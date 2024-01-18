@@ -1,4 +1,3 @@
-"""Transformations for torch.fx.GraphModule"""
 from collections.abc import Iterable
 from itertools import combinations
 from typing import Any, Callable, Optional, Union
@@ -8,7 +7,8 @@ from torch.fx.graph_module import GraphModule
 from torch.fx.node import Node
 from torch.nn.utils.fusion import fuse_conv_bn_eval, fuse_linear_bn_eval
 
-from ...logger import log
+from owlite_core.logger import log
+
 from ...nn import modules as qnn
 from ...nn.fake_quantizer import FakeQuantizer
 from ...nn.modules.qmodule_mixins import UnaryNeuralQModuleMixin
@@ -88,6 +88,7 @@ def fix_hard_coded_device(graph_module: GraphModule) -> GraphModule:
     with graph.inserting_before(next(iter(graph_module.graph.nodes))):
         canary = graph.get_attr("sqzb_module_device_canary")
         canary_device = graph.call_function(getattr, (canary, "device"))
+        graph_module.meta["canary_device_node"] = canary_device
 
     for node in graph.nodes:
         if node.kwargs.get("device", None) is not None:
@@ -99,6 +100,33 @@ def fix_hard_coded_device(graph_module: GraphModule) -> GraphModule:
             args = (node.args[0], canary_device)
             node.args = args
 
+    return graph_module
+
+
+@register_graph_module_transform
+def canonicalize_silu(graph_module: GraphModule) -> GraphModule:
+    """Decomposes all appearances of `torch.nn.SiLU` and `torch.nn.functional.silu`
+    by two separate sigmoid and mul nodes.
+
+    Args:
+        graph_module (GraphModule): the input graph module
+
+    Returns:
+        GraphModule: the graph module all of whose silu nodes are canonicalized.
+    """
+    graph = graph_module.graph
+    for node in graph.nodes:
+        assert isinstance(node, Node)
+        module = get_target_module(node)
+        if isinstance(module, torch.nn.SiLU) or (
+            node.op == "call_function" and node.target is torch.nn.functional.silu
+        ):
+            input_node = node.all_input_nodes[0]
+            with graph.inserting_before(node):
+                sigmoid_node = graph.call_function(torch.nn.functional.sigmoid, args=(input_node,))
+                mul_node = graph.call_function(torch.mul, args=(input_node, sigmoid_node))
+            node.replace_all_uses_with(mul_node)
+    graph.lint()
     return graph_module
 
 
@@ -342,7 +370,7 @@ def fuse_redundant_input_quantizers_of(node: Node):
 
 
 def clip_narrow_range_weights(graph_module: GraphModule):
-    """Clips weights with a narrow range of QConv in the graph_module.
+    """Clips weights with a narrow range of quantized modules in the graph_module.
 
     Args:
         graph_module (GraphModule): a graph module

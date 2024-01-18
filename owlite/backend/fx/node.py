@@ -1,4 +1,3 @@
-"""Utilities to check properties of torch.fx.Node"""
 import inspect
 from typing import Optional
 

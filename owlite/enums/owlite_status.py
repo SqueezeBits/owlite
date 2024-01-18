@@ -1,4 +1,3 @@
-"""The enumeration of the status of the model converted by OwLite"""
 from enum import Enum
 
 

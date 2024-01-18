@@ -4,8 +4,9 @@ from typing import Optional, Union
 import torch
 from torch.fx.node import Argument, Node
 
+from owlite_core.logger import log
+
 from ...enums import ModuleInsertionPoint
-from ...logger import log
 from ..utils import nodestr
 from .edge import Edge
 
@@ -115,8 +116,11 @@ class ModuleInserter:
             if not graph_module.add_submodule(name, module):
                 log.warning(f"Failed to add the following submodule by name '{name}': {module}")
                 return None
+            device = graph_module.meta["canary_device_node"]
             with graph.inserting_before(node):
-                input_tensor_node = graph.call_function(torch.tensor, (argument,), {"dtype": torch.float32})
+                input_tensor_node = graph.call_function(
+                    torch.tensor, (argument,), {"dtype": torch.float32, "device": device}
+                )
                 return graph.call_module(name, (input_tensor_node,))
 
         name = f"{node.name}_{self.insertion_key}_quantizer"

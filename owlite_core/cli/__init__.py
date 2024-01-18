@@ -9,8 +9,7 @@ class BaseOwLiteCLICommand(ABC):
     @staticmethod
     @abstractmethod
     def register_subcommand(parser: _SubParsersAction) -> None:
-        """
-        Abstract method to register subcommands.
+        """Abstract method to register subcommands.
 
         This method should be implemented by subclasses to register subcommands with the provided parser.
 
@@ -24,8 +23,7 @@ class BaseOwLiteCLICommand(ABC):
 
     @abstractmethod
     def run(self) -> None:
-        """
-        Abstract method to execute the command logic.
+        """Abstract method to execute the command logic.
 
         This method should be implemented by subclasses to define the logic executed when the command runs.
 

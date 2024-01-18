@@ -40,7 +40,7 @@ def requirements() -> list[str]:
 
 setup(
     name="owlite",
-    version="v0.1",
+    version="v1.1",
     description="OwLite - No-Code AI compression Toolkit",
     url="https://bitbucket.org/squeezebits/owlitetorch",
     author="SqueezeBits Inc.",

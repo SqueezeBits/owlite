@@ -2,10 +2,11 @@
 # pylint: disable=unnecessary-lambda, too-few-public-methods
 from argparse import Namespace, _SubParsersAction
 
-from ..logger import log
-from . import BaseOwLiteCLICommand
-from .login import login, logout
-from .login_api import whoami
+from owlite_core.logger import log
+
+from .. import BaseOwLiteCLICommand
+from ..api.login import whoami
+from ..login import login, logout
 
 
 class UserCommands(BaseOwLiteCLICommand):
@@ -51,8 +52,8 @@ class WhoamiCommand(BaseUserCommand):
 
     def run(self) -> None:
         """Executes the whoami operation and prints the username."""
-        username = whoami()
-        log.info(f"Hello! you are: {username}")
+        username = whoami().name
+        log.info(username)
 
 
 class LogoutCommand(BaseUserCommand):

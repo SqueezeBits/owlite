@@ -18,19 +18,23 @@ from onnx.shape_inference import infer_shapes, infer_shapes_path
 from onnxsim.onnxsim_cpp2py_export import simplify_path
 from torch.fx.graph_module import GraphModule
 
+from owlite_core.logger import log
+
 from ...enums import OwLiteStatus
-from ...logger import log
 from ...nn import FakeQuantizer
+from ...nn.functions import clq_function
+from ...options import DynamicAxisOptions
 from ..fx.transforms import clip_narrow_range_weights, fold_zp_to_bias, fuse_bn
 from ..utils import (
     get_most_common_device,
     get_most_common_floating_point_type,
-    map_signature,
     move_tensors_to,
     nodestr,
 )
-from .dynamize import DynamicDimensions, dynamize
+from .dynamize import dynamize
+from .export_with_external_data import export_with_external_data
 from .model_checking import compare
+from .signature import Signature
 from .transforms import apply_onnx_transforms
 
 # Large models (e.g. SwinTransformer) requires
@@ -60,7 +64,7 @@ def export(
     check_n: int = 1,
     skip_fuse_bn: bool = False,
     skipped_optimizers: Optional[list[str]] = None,
-    dynamic_dimensions: Optional[DynamicDimensions] = None,
+    dynamic_axis_options: Optional[Union[DynamicAxisOptions, dict[str, dict[str, int]]]] = None,
 ) -> None:
     r"""Exports a model into ONNX format.
 
@@ -242,8 +246,9 @@ def export(
         skipped_optimizers (Optional[list[str]], optional): Only available when `simplify=True`. The list of
             onnx-simplifier passes to skip. Defaults to None.
             See https://github.com/onnx/optimizer/tree/master/onnxoptimizer/passes for available passes.
-        dynamic_dimensions (Optional[DynamicDimensions], optional): Dynamic dimensions setting configured by
-            `configure_dynamic_dimensions`. Defaults to None.
+        dynamic_axis_options (Optional[Union[DynamicAxisOptions, dict[str, dict[str, int]]]], optional):
+            A `DynamicAxisOptions` object indicating which input tensor(s) should be configured with a dynamic axis.
+            Defaults to None.
 
     Raises:
         TypeError: If `f` is not a string.
@@ -322,8 +327,10 @@ def export(
         skipped_optimizers=skipped_optimizers,
     )
 
-    if dynamic_dimensions is not None:
-        onnx_proto = dynamize(onnx_proto, dynamic_dimensions)
+    if dynamic_axis_options is not None:
+        if isinstance(dynamic_axis_options, dict):
+            dynamic_axis_options = DynamicAxisOptions(dynamic_axis_options)
+        onnx_proto = dynamize(onnx_proto, dynamic_axis_options)
 
     onnx_proto.producer_name = f"owlite + {onnx_proto.producer_name}"
     onnx_proto.doc_string = "Processed by OwLite"
@@ -338,15 +345,10 @@ def export(
         os.makedirs(model_dir, exist_ok=True)
     if abs_location is not None and os.path.isfile(abs_location):
         log.warning(f"External data file at {abs_location} will be overwritten.")
-        # os.remove is required since onnx.save opens the external data file with mode='ab'
+        # os.remove is required since export_to_onnx_with_external_data opens the external data file with mode='r+b'
         os.remove(abs_location)
-    onnx.save(
-        onnx_proto,
-        f,
-        location=location,
-        save_as_external_data=True,
-        size_threshold=0,
-    )
+
+    export_with_external_data(onnx_proto, f, location=location, size_threshold=0)
 
 
 # pylint: disable=missing-function-docstring, broad-exception-caught
@@ -523,7 +525,7 @@ def _optimize_path(
 
 
 def name_anonymous_nodes(onnx_proto: ModelProto) -> ModelProto:
-    counts = {}
+    counts: dict[str, int] = {}
     for node in onnx_proto.graph.node:
         if node.name:
             continue
@@ -563,40 +565,8 @@ def get_default_input_names(
             args, kwargs = onnx_export_args[:-1], onnx_export_args[-1]
         else:
             args, kwargs = onnx_export_args, {}
-    input_shape_signature = get_input_shape_signature(module, *args, **kwargs)
+    input_shape_signature = Signature.from_module(module, args, kwargs)
     return [*(pair[0] for pair in input_shape_signature)]
-
-
-def get_input_shape_signature(
-    module: torch.nn.Module, *args: Any, **kwargs: Any
-) -> list[tuple[str, Union[tuple[int, ...], str]]]:
-    """Maps the parameter names of a PyTorch module's forward method to the corresponding values' shapes or class name.
-
-    This function returns a list of tuples, where each tuple contains a parameter name and its corresponding shape
-    (as a tuple of integers) if the value is an instance of `torch.Tensor` or otherwise the name of the class of
-    the value.
-
-    Args:
-        module (torch.nn.Module): The PyTorch module to inspect.
-        args (Any): Positional arguments to be passed to the module.
-        kwargs (Any): Keyword arguments to be passed to the module.
-
-    Returns:
-        list[tuple[str, Union[tuple[int, ...], str]]]: A list of tuples mapping parameter names to their shape
-        (if they are torch.Tensor instances) or to their class name (for non-torch.Tensor instances).
-
-    Note:
-        This function assumes that `args` and `kwargs` match the signatures of the module's forward method exactly,
-        in order and length. If they don't, the result may not be as expected or exceptions might occur.
-    """
-    signature_map = map_signature(module.forward, *args, **kwargs)
-    return [
-        (
-            name,
-            tuple(value.shape) if isinstance(value, torch.Tensor) else value.__class__.__name__,
-        )
-        for name, value in signature_map
-    ]
 
 
 def check_fake_quantization_condition(model: GraphModule) -> bool:
@@ -610,8 +580,9 @@ def check_fake_quantization_condition(model: GraphModule) -> bool:
         model: The model to be checked.
 
     Raises:
-        ValueError: If step_size contains negative numbers.
-        ValueError: If zero_point of symmetric quantization is not 0
+        ValueError: If any step_size of the quantizer in the model contains negative numbers,
+            but the quantizer does not use clq.
+        ValueError: If any zero_point of the symmetric quantizer in the model is not 0.
 
     Returns:
         True if all conditions are satisfied.
@@ -619,8 +590,12 @@ def check_fake_quantization_condition(model: GraphModule) -> bool:
     for name, module in model.named_modules(remove_duplicate=True):
         if isinstance(module, FakeQuantizer) and module.is_enabled:
             # check positive step_size
-            if hasattr(module, "step_size") and module.step_size.min() < 0:
-                raise ValueError(f"({name}) : The step size contains negative numbers.")
+            if hasattr(module, "step_size") and module.qat_function is not clq_function and module.step_size.min() < 0:
+                log.error(
+                    f"({name}) : The step size contains negative numbers, but not using clq.\n"
+                    f"{module}\nstep_size:{module.step_size.data}"
+                )
+                raise ValueError("The step size contains negative numbers.")
             # check symmetricity
             if module.symmetric.item() and hasattr(module, "zero_point") and module.zero_point.amax() > 0:
                 raise ValueError(f"({name}) : The zero point of symmetric quantization is not 0.")

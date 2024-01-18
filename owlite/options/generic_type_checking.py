@@ -1,4 +1,3 @@
-"""Generic type checking utilities"""
 from types import NoneType
 from typing import Any, Union, get_args, get_origin
 
@@ -14,14 +13,10 @@ def generic_isinstance(obj: Any, type_hint: Union[type, tuple[type]]) -> bool:
     value_types = get_args(type_hint)
     if origin_type is dict:
         value_type = value_types[0]
-        return isinstance(obj, origin_type) and all(
-            generic_isinstance(x, value_type) for x in obj.values()
-        )
+        return isinstance(obj, origin_type) and all(generic_isinstance(x, value_type) for x in obj.values())
     if origin_type in (tuple, list):
         value_type = value_types[0]
-        return isinstance(obj, origin_type) and all(
-            generic_isinstance(x, value_type) for x in obj
-        )
+        return isinstance(obj, origin_type) and all(generic_isinstance(x, value_type) for x in obj)
     if origin_type is Union:
         return generic_isinstance(obj, value_types)
     raise NotImplementedError(f"generic_isinstance for {type_hint} is not implemented.")

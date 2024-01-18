@@ -1,4 +1,3 @@
-"""The implementation for the base class for olt.Options"""
 import inspect
 from dataclasses import MISSING, fields, is_dataclass
 from enum import Enum
@@ -7,7 +6,8 @@ from typing import Any, Union, get_args, get_origin, get_type_hints
 from typing_extensions import Self
 from yacs.config import CfgNode
 
-from ..logger import log
+from owlite_core.logger import log
+
 from .generic_type_checking import generic_isinstance, is_optional, unwrap_optional
 from .load import load_json_or_yaml
 

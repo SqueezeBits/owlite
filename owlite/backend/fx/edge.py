@@ -1,11 +1,10 @@
-"""A representation of the concept of edge connecting two adjacent nodes in a graph"""
-
 from typing import Optional
 
 import torch
 from torch.fx.node import Node
 
-from ...logger import log
+from owlite_core.logger import log
+
 from ..utils import nodestr
 
 

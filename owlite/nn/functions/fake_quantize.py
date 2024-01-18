@@ -1,4 +1,3 @@
-"""Fake quantization using configuration"""
 from typing import Callable, Union
 
 import torch

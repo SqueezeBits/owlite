@@ -1,14 +1,18 @@
-"""Basic tensor quantization module"""
 from collections import OrderedDict
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import torch
 
+from owlite_core.logger import log
+
 from ..calib import PercentileCalibrator
 from ..enums import PTQCalibrationType, QATBackwardType
-from ..logger import log
+from ..nn.functions import clq_function
 from ..nn.functions.fake_quantize import FakeQuantFunc
 from ..options.fake_quantizer_options import FakeQuantizerOptions
+
+if TYPE_CHECKING:
+    from ..calib.calibrator import Calibrator
 
 
 # pylint: disable=too-many-instance-attributes
@@ -107,8 +111,8 @@ class FakeQuantizer(torch.nn.Module):
             if channel_size is not None:
                 self.channel_size = channel_size
         else:
-            self.step_size = torch.nn.Parameter(torch.ones(1))
-            self.zero_point = torch.nn.Parameter(
+            self.step_size: torch.nn.Parameter = torch.nn.Parameter(torch.ones(1))
+            self.zero_point: torch.nn.Parameter = torch.nn.Parameter(
                 torch.zeros(1),
                 requires_grad=bool(not self.symmetric.item() and self.learn_zero_point.item()),
             )
@@ -120,7 +124,7 @@ class FakeQuantizer(torch.nn.Module):
         if options.ptq_calibration == PTQCalibrationType.percentile:
             if options.percentile is None:
                 raise ValueError("percentile value is required for percentile PTQ calibrator")
-            self.calibrator = calibrator_class(self, options.percentile)
+            self.calibrator: Calibrator = calibrator_class(self, options.percentile)
         else:
             self.calibrator = calibrator_class(self)
 
@@ -235,10 +239,11 @@ class FakeQuantizer(torch.nn.Module):
                 f"the first dimension of the input tensor (={inputs.shape[0]})."
             )
 
-        if self.step_size.min() <= 0:
+        if self.qat_function is not clq_function and not self.narrow and self.step_size.min() <= 0:
             log.error(
                 f"Expected step_size to be positive, but got step_size={self.step_size.data}. "
                 "Please try one of the suggestions below:\n"
+                '   * select "clq" from the "qat_backward" field in the OwLite Web UI (https://owlite.ai/project);\n'
                 "   * set the weight_decay of the fake quantizer's parameters to 0;\n"
                 "   * reduce the learning rate for the fake quantizer's parameters; or\n"
                 "   * reduce the grad_scale of the fake quantizer"

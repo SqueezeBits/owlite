@@ -1,4 +1,3 @@
-"""Module for tracing torch.nn.Module instances into torch.fx.graph_module.GraphModule"""
 # pylint: disable=protected-access
 import inspect
 import sys
@@ -13,8 +12,9 @@ from torch import Tensor
 from torch.fx.graph_module import GraphModule, _WrappedCall
 from torch.nn.parallel import DataParallel, DistributedDataParallel
 
+from owlite_core.logger import log
+
 from ...enums import OwLiteStatus
-from ...logger import log
 from ..utils import (
     get_most_common_device,
     get_most_common_floating_point_type,
@@ -56,13 +56,13 @@ def insert_output_adapter(graph_module: GraphModule, output: Any) -> GraphModule
 
 
 # pylint: disable-next=missing-function-docstring
-def create_output_adapter(original_output):
+def create_output_adapter(original_output: Any) -> Callable[[Any], Any]:
     # pylint: disable-next=missing-class-docstring, too-few-public-methods
     class TensorPlaceholder:
         pass
 
-    def extract_structure(original_output):
-        def _extract_structure(obj):
+    def extract_structure(original_output: Any) -> Any:
+        def _extract_structure(obj: Any) -> Any:
             if isinstance(obj, Tensor):
                 return TensorPlaceholder()
             if isinstance(obj, tuple):
@@ -80,7 +80,7 @@ def create_output_adapter(original_output):
 
     extracted_output_structure = extract_structure(original_output)
 
-    def output_adapter(graph_module_out):
+    def output_adapter(graph_module_out: Any) -> Any:
         # output adapter node will be transparent to torch.onnx.export(jit.trace)
         if torch._C._get_tracing_state():  # pylint: disable=protected-access
             return graph_module_out
@@ -88,7 +88,7 @@ def create_output_adapter(original_output):
         # flatten graph module output
         flattened_outputs = []
 
-        def _extract_output(output: Union[Iterable, torch.Tensor]):
+        def _extract_output(output: Union[Iterable, torch.Tensor]) -> None:
             if isinstance(output, torch.Tensor):
                 flattened_outputs.append(output)
             elif isinstance(output, Iterable):
@@ -98,7 +98,7 @@ def create_output_adapter(original_output):
         _extract_output(graph_module_out)
 
         # rearrange output to match with original structure
-        def _create_return(obj):
+        def _create_return(obj: Any) -> Any:
             if isinstance(obj, TensorPlaceholder):
                 return flattened_outputs.pop(0)
             if isinstance(obj, tuple):
@@ -118,7 +118,7 @@ def create_output_adapter(original_output):
 
 
 # pylint: disable-next=missing-function-docstring
-def patched_wrapped_call(self, obj: GraphModule, *args, **kwargs):
+def patched_wrapped_call(self: Any, obj: GraphModule, *args: Any, **kwargs: Any) -> Any:
     params = OrderedDict(
         (k, v) for i, (k, v) in enumerate(inspect.signature(self.cls.forward).parameters.items()) if i > 0
     )
@@ -148,14 +148,12 @@ def patched_wrapped_call(self, obj: GraphModule, *args, **kwargs):
     try:
         if self.cls_call is not None:
             return self.cls_call(obj, *args, **kwargs)
-        return super(self.cls, obj).__call__(*args, **kwargs)  # type: ignore[misc]
+        return super(self.cls, obj).__call__(*args, **kwargs)
     except Exception as e:
         assert e.__traceback__
         topmost_framesummary: traceback.FrameSummary = traceback.StackSummary.extract(
             traceback.walk_tb(e.__traceback__)
-        )[
-            -1
-        ]  # type: ignore[arg-type]
+        )[-1]
         if "eval_with_key" in topmost_framesummary.filename:
             print(
                 _WrappedCall._generate_error_message(topmost_framesummary),
@@ -165,10 +163,10 @@ def patched_wrapped_call(self, obj: GraphModule, *args, **kwargs):
         raise e
 
 
-_WrappedCall.__call__ = patched_wrapped_call
+_WrappedCall.__call__ = patched_wrapped_call  # type: ignore[method-assign]
 
 
-def symbolic_trace(model: torch.nn.Module, *args: Tensor, **kwargs: dict[str, Any]) -> GraphModule:
+def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphModule:
     """Like `torch.fx.symbolic_trace`, this function traces the input `model` to convert it into a GraphModule.
     In order for the tracing to be successful, the `model` must be able to pass `torch.compile(model, fullgraph=True)`.
 

@@ -1,29 +1,18 @@
-"""Preprocessing steps required for onnx simplifier and for further optimization"""
 import os
-import sys
-import uuid
 from collections import Counter, OrderedDict
-from collections.abc import Iterable
-from itertools import chain
-from typing import Callable, Optional, Union, cast
+from enum import Enum
+from typing import Any, Callable, Optional, Union, cast
 
 import numpy as np
 import onnx
 import onnx_graphsurgeon as gs
-from onnx import GraphProto, ModelProto, TensorProto
-from onnx.external_data_helper import (
-    _get_attribute_tensors_from_graph,
-    _get_initializer_tensors_from_graph,
-    _is_valid_filename,
-    save_external_data,
-    set_external_data,
-    uses_external_data,
-)
-from onnx_graphsurgeon.exporters.onnx_exporter import OnnxExporter
+from onnx import ModelProto, TensorProto
 from onnx_graphsurgeon.importers.onnx_importer import get_numpy_type
 
-from ...logger import log
+from owlite_core.logger import log
+
 from ..utils import is_floating_point, nodestr
+from .export_with_external_data import export_with_external_data
 from .fold_constants import fold_constants
 from .onnx_op import ONNXOp
 
@@ -34,9 +23,7 @@ TensorType = Union[gs.Constant, gs.Variable]
 MAXIMUM_ITERATION = 100
 
 
-def apply_onnx_transforms(
-    onnx_proto: ModelProto, output_path: Optional[str] = None, **kwargs
-) -> ModelProto:
+def apply_onnx_transforms(onnx_proto: ModelProto, output_path: Optional[str] = None, **kwargs: Any) -> ModelProto:
     """Applies all transformations registered in this file.
 
     Args:
@@ -45,7 +32,7 @@ def apply_onnx_transforms(
             written with external data after the transformations (required for large models > 2GB). Defaults to None.
 
     Returns:
-        ModelProto: _description_
+        ModelProto: the transformed ONNX model proto.
     """
     graph = gs.import_onnx(onnx_proto)
     for name, transform in ONNX_TRANSFORMS.items():
@@ -56,7 +43,7 @@ def apply_onnx_transforms(
     graph.cleanup()
     if output_path is None:
         return gs.export_onnx(graph)
-    export_to_onnx_with_external_data(graph, output_path, **kwargs)
+    export_with_external_data(graph, output_path, **kwargs)
     return onnx.load(output_path)
 
 
@@ -167,9 +154,7 @@ def synchronize_floating_point_types(graph: gs.Graph) -> gs.Graph:
     Returns:
         gs.Graph: the ONNX graph with only one floating point type.
     """
-    floating_point_dtypes: list[np.dtype] = [
-        *filter(is_floating_point, (t.dtype for t in graph.tensors().values()))
-    ]
+    floating_point_dtypes: list[np.dtype] = [*filter(is_floating_point, (t.dtype for t in graph.tensors().values()))]
     counter = Counter(floating_point_dtypes)
     log.debug(f"Counts of floating point types: {counter}")
 
@@ -177,19 +162,43 @@ def synchronize_floating_point_types(graph: gs.Graph) -> gs.Graph:
         log.debug("No tensor with floating point type found in the graph")
         return graph
 
-    most_common_dtype = counter.most_common(1)[0][0]
-    log.debug(f"Most common floating point type: {most_common_dtype}")
+    class FloatingPointSyncType(Enum):
+        """How to synchronize the floating point types within a model"""
+
+        FP32 = 0
+        FP16 = 1
+        MOST_COMMON = 2
+
+    sync_type_name = os.getenv("OWLITE_FLOATING_POINT_SYNC_TYPE", "MOST_COMMON")
+    try:
+        sync_type = FloatingPointSyncType[sync_type_name]
+    except KeyError as e:
+        log.error(
+            f"Invalid value {sync_type_name} given to the environment variable 'OWLITE_FLOATING_POINT_SYNC_TYPE'. "
+            f"It must be one of {','.join(t.name for t in FloatingPointSyncType)}"
+        )
+        raise e
+
+    dtype: np.dtype
+    match sync_type:
+        case FloatingPointSyncType.FP32:
+            dtype = np.dtype("float32")
+        case FloatingPointSyncType.FP16:
+            dtype = np.dtype("float16")
+        case FloatingPointSyncType.MOST_COMMON:
+            dtype = counter.most_common(1)[0][0]
+            log.debug(f"Most common floating point type: {dtype}")
 
     if len(counter) > 1:
         log.warning(
             "More than one floating point types are used in the graph ("
             f'{", ".join(f"{value} tensors of type {key.name}" for key, value in OrderedDict(counter).items())}). '
-            f"Will use the most common one: {most_common_dtype}"
+            f"Will use {dtype.name} as 'OWLITE_FLOATING_POINT_SYNC_TYPE' was set to {sync_type.name}"
         )
 
     for node in graph.nodes:
-        cast_constant_input_fp_tensors_of(node, most_common_dtype)
-        cast_output_fp_tensors_of(node, most_common_dtype)
+        cast_input_fp_tensors_of(node, dtype)
+        cast_output_fp_tensors_of(node, dtype)
 
     return eliminate_nop_cast(graph)
 
@@ -211,12 +220,14 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
         if isinstance(tensor, gs.Constant):
             return tensor
 
-        if (
-            len(tensor.inputs) == 1
-            and tensor.inputs[0].op == "Constant"
-            and isinstance(tensor.inputs[0].attrs.get("value"), gs.Constant)
-        ):
+        if len(tensor.inputs) != 1:
+            return None
+
+        if tensor.inputs[0].op == "Constant" and isinstance(tensor.inputs[0].attrs.get("value"), gs.Constant):
             return tensor.inputs[0].attrs.get("value")
+
+        if tensor.inputs[0].op == "Identity":
+            return _get_constant_or_none(tensor.i())
 
         return None
 
@@ -224,9 +235,7 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
         conv_node: gs.Node,
     ) -> Optional[tuple[gs.Constant, Optional[gs.Constant], Optional[gs.Constant]]]:
         if conv_node.op != "Conv":
-            raise ValueError(
-                f"Expected a `Conv` operation but received `{conv_node.op}`"
-            )
+            raise ValueError(f"Expected a `Conv` operation but received `{conv_node.op}`")
 
         # weight is required field for conv
         conv_weight = conv_node.inputs[1]
@@ -237,10 +246,7 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
         # we do not consider zero point for now
         quantizer_step_size = None
 
-        if (
-            isinstance(conv_weight, gs.Variable)
-            and get_defining_op_type(conv_weight) == "DequantizeLinear"
-        ):
+        if isinstance(conv_weight, gs.Variable) and get_defining_op_type(conv_weight) == "DequantizeLinear":
             dequantize_node = conv_weight.inputs[0]
 
             if get_defining_op_type(dequantize_node.inputs[0]) != "QuantizeLinear":
@@ -259,6 +265,10 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
                 return None
 
             quantizer_step_size = _get_constant_or_none(quantizer_step_size)
+            if quantizer_step_size is None and quantize_node.i(1).op == "Abs":
+                # Abs operation is inserted for CLQ
+                quantizer_step_size = _get_constant_or_none(quantize_node.i(1).inputs[0])
+
             if quantizer_step_size is None:
                 # quantizer step size is variable
                 return None
@@ -282,19 +292,24 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
 
         return conv_weight, conv_bias, quantizer_step_size
 
+    def _is_narrow_range_quantization(conv_weight: gs.Constant, step_size: gs.Constant) -> bool:
+        assert conv_weight.values.ndim == 4
+        assert step_size.values.ndim in (0, 1)
+
+        step_size_value = np.atleast_1d(step_size.values)[:, np.newaxis, np.newaxis, np.newaxis]
+
+        return np.greater(np.round(np.min(conv_weight.values / step_size_value)), -128)
+
     def _get_constant_param_to_fold(node_to_fold: gs.Node) -> Optional[gs.Constant]:
-        parameter_to_fold = [
-            _get_constant_or_none(tensor) for tensor in node_to_fold.inputs
-        ]
-        parameter_to_fold = [
-            tensor for tensor in parameter_to_fold if tensor is not None
-        ]
+        parameter_to_fold = [_get_constant_or_none(tensor) for tensor in node_to_fold.inputs]
+        parameter_to_fold = [tensor for tensor in parameter_to_fold if tensor is not None]
 
         if len(parameter_to_fold) == 1:
             return parameter_to_fold[0]
 
         return None
 
+    # pylint: disable-next=too-many-return-statements
     def _is_foldable(conv_output_tensor: gs.Variable) -> bool:
         # convolution output is dependant to other node than conv or convolution output is used more than once
         if len(conv_output_tensor.inputs) != 1 or len(conv_output_tensor.outputs) != 1:
@@ -318,26 +333,33 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
         conv_weight, conv_bias, quantizer_step_size = conv_node_params
 
         # disclaimer: we now only consider 2d convolution, with this removed, conditions below should be revisited
-        if conv_weight.values.ndim != 4 or (
-            conv_bias is not None and conv_bias.values.ndim != 1
-        ):
+        if conv_weight.values.ndim != 4 or (conv_bias is not None and conv_bias.values.ndim != 1):
             return False
 
-        # cannot broadcast parameter to fold to convolution output channel dimension
-        if (
-            parameter_to_fold.values.shape.count(1)
-            < len(parameter_to_fold.values.shape) - 1
-            and parameter_to_fold.values.size != conv_weight.values.shape[0]
-        ):
+        # only 0,1 or 4-dimensional parameters are foldable for 2d convolution
+        if parameter_to_fold.values.ndim not in (0, 1, 4):
             return False
 
-        # cannot broadcast parameter to fold to per-tensor quantization step size
-        if (
-            quantizer_step_size is not None
-            and parameter_to_fold.values.size != 1
-            and quantizer_step_size.values.size == 1
-        ):
+        # cannot broadcast parameter to convolution output channel dimension
+        if parameter_to_fold.values.ndim != 0 and parameter_to_fold.values.size != conv_weight.values.shape[0]:
             return False
+
+        # cannot broadcast parameter to convolution output channel dimension
+        if parameter_to_fold.values.ndim == 4 and parameter_to_fold.values.shape[1] != conv_weight.values.shape[0]:
+            return False
+
+        if quantizer_step_size is not None:
+            # cannot fold negative values into quantized weight when -128 bin is not empty
+            if (
+                (node_to_fold.op in ("Mul", "Div") and np.min(parameter_to_fold.values) < 0)
+                or (node_to_fold.op == "Sub" and node_to_fold.inputs[1] is conv_output_tensor)
+                and not _is_narrow_range_quantization(conv_weight, quantizer_step_size)
+            ):
+                return False
+
+            # cannot broadcast parameter to fold to per-tensor quantization step size
+            if parameter_to_fold.values.size != 1 and quantizer_step_size.values.size == 1:
+                return False
 
         return True
 
@@ -352,14 +374,10 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
             param_to_fold = _get_constant_param_to_fold(mul_or_div_node)
             assert param_to_fold is not None
             value_to_fold: np.ndarray = (
-                param_to_fold.values
-                if mul_or_div_node.op == "Mul"
-                else (param_to_fold.values**-1)
+                param_to_fold.values if mul_or_div_node.op == "Mul" else (param_to_fold.values**-1)
             )
 
-            value_to_fold = np.broadcast_to(
-                value_to_fold.squeeze(), conv_weight.values.shape[0]
-            )
+            value_to_fold = np.broadcast_to(value_to_fold.squeeze(), conv_weight.values.shape[0])
 
             if conv_bias is not None:
                 conv_bias.values *= value_to_fold
@@ -394,14 +412,10 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
             assert param_to_fold is not None
             value_to_fold: np.ndarray = param_to_fold.values
 
-            value_to_fold = np.broadcast_to(
-                value_to_fold.squeeze(), conv_weight.values.shape[0]
-            )
+            value_to_fold = np.broadcast_to(value_to_fold.squeeze(), conv_weight.values.shape[0])
 
             if add_or_sub_node.op == "Sub":
-                if (
-                    add_or_sub_node.inputs[1] is conv_node.outputs[0]
-                ):  # Sub(param, Conv(x, w, b))
+                if add_or_sub_node.inputs[1] is conv_node.outputs[0]:  # Sub(param, Conv(x, w, b))
                     conv_weight.values = -conv_weight.values
                     if conv_bias is not None:
                         conv_bias.values = -conv_bias.values
@@ -413,9 +427,7 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
                 conv_bias.values += value_to_fold
 
             else:
-                new_bias = gs.Constant(
-                    param_to_fold.name, value_to_fold, param_to_fold.data_location
-                )
+                new_bias = gs.Constant(param_to_fold.name, value_to_fold, param_to_fold.data_location)
                 conv_node.inputs.append(new_bias)
 
             conv_node.outputs = add_or_sub_node.outputs
@@ -435,9 +447,7 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
             i = 0
             while i < MAXIMUM_ITERATION:
                 if _is_foldable(node.outputs[0]):
-                    log.debug(
-                        f"Folding {nodestr(node.outputs[0].outputs[0])} into {nodestr(node)}"
-                    )
+                    log.debug(f"Folding {nodestr(node.outputs[0].outputs[0])} into {nodestr(node)}")
                     _fold(node, node.outputs[0].outputs[0])
                     i += 1
                     continue
@@ -471,15 +481,11 @@ def remove_if_cast_op_with_no_effect(node: gs.Node, graph: gs.Graph) -> None:
         return
 
     if len(node.inputs) != 1:
-        log.debug_warning(
-            f"{nodestr(node)} must have 1 input but {len(node.inputs)} found: {node.inputs}"
-        )
+        log.debug_warning(f"{nodestr(node)} must have 1 input but {len(node.inputs)} found: {node.inputs}")
         return
 
     if len(node.outputs) != 1:
-        log.debug_warning(
-            f"{nodestr(node)} must have 1 output but {len(node.outputs)} found: {node.outputs}"
-        )
+        log.debug_warning(f"{nodestr(node)} must have 1 output but {len(node.outputs)} found: {node.outputs}")
         return
 
     the_input = node.inputs[0]
@@ -497,7 +503,7 @@ def remove_if_cast_op_with_no_effect(node: gs.Node, graph: gs.Graph) -> None:
         remove_if_has_unique_non_optional_input_and_unique_used_output(node, graph)
 
 
-def cast_constant_input_fp_tensors_of(node: gs.Node, dtype: np.dtype) -> None:
+def cast_input_fp_tensors_of(node: gs.Node, dtype: np.dtype) -> None:
     onnx_op = ONNXOp(node.op)
     if not onnx_op.is_valid:
         log.debug_warning(f"Unsupported ONNXOp: {node.op}")
@@ -508,11 +514,12 @@ def cast_constant_input_fp_tensors_of(node: gs.Node, dtype: np.dtype) -> None:
         if dtype not in type_constraints:
             continue
 
+        if not tensor.inputs and is_floating_point(tensor.dtype):
+            set_dtype(tensor, dtype)
+            continue
+
         for input_node in tensor.inputs:
-            if (
-                input_node.op in ("Constant", "ConstantOfShape")
-                and "value" in input_node.attrs
-            ):
+            if input_node.op in ("Constant", "ConstantOfShape") and "value" in input_node.attrs:
                 constant: gs.Constant = input_node.attrs["value"]
                 if not is_floating_point(constant.dtype) or constant.dtype == dtype:
                     continue
@@ -549,16 +556,10 @@ def set_dtype(tensor: gs.Tensor, dtype: np.dtype) -> None:
     log.debug(f"{original_repr} -> {tensor}")
 
 
-def remove_if_has_unique_non_optional_input_and_unique_used_output(
-    node: gs.Node, graph: gs.Graph
-) -> None:
-    used_outputs = [
-        *filter(lambda t: len(t.outputs) > 0 or t in graph.outputs, node.outputs)
-    ]
+def remove_if_has_unique_non_optional_input_and_unique_used_output(node: gs.Node, graph: gs.Graph) -> None:
+    used_outputs = [*filter(lambda t: len(t.outputs) > 0 or t in graph.outputs, node.outputs)]
     if len(used_outputs) != 1:
-        log.debug_warning(
-            f"Not removing {nodestr(node)} as it doesn't have unique used outputs: {used_outputs}"
-        )
+        log.debug_warning(f"Not removing {nodestr(node)} as it doesn't have unique used outputs: {used_outputs}")
         return
 
     onnx_op = ONNXOp(node.op)
@@ -567,12 +568,7 @@ def remove_if_has_unique_non_optional_input_and_unique_used_output(
         return
 
     non_optional_inputs = [
-        *(
-            node.inputs[idx]
-            for idx in filter(
-                lambda idx: not onnx_op.i(idx).is_optional, range(len(node.inputs))
-            )
-        )
+        *(node.inputs[idx] for idx in filter(lambda idx: not onnx_op.i(idx).is_optional, range(len(node.inputs))))
     ]
 
     if len(non_optional_inputs) != 1:
@@ -592,9 +588,7 @@ def remove_if_has_unique_non_optional_input_and_unique_used_output(
         child_nodes = [*the_output.outputs]
         log.debug(f"Child nodes of {nodestr(node)}: {[*map(nodestr, child_nodes)]}")
         for child_node in child_nodes:
-            child_node.inputs = [
-                the_input if t is the_output else t for t in child_node.inputs
-            ]
+            child_node.inputs = [the_input if t is the_output else t for t in child_node.inputs]
             log.debug(f"Modified child node: {nodestr(child_node, True)}")
             if child_node not in the_input.outputs:
                 the_input.outputs.append(child_node)
@@ -605,145 +599,15 @@ def remove_if_has_unique_non_optional_input_and_unique_used_output(
 
 
 def input_node_of(node: gs.Node, tensor_idx=0, producer_idx=0) -> Optional[gs.Node]:
-    if (
-        len(node.inputs) > tensor_idx
-        and len(node.inputs[tensor_idx].inputs) > producer_idx
-    ):
+    if len(node.inputs) > tensor_idx and len(node.inputs[tensor_idx].inputs) > producer_idx:
         return node.i(tensor_idx, producer_idx)
     return None
 
 
 def output_node_of(node: gs.Node, tensor_idx=0, consumer_idx=0) -> Optional[gs.Node]:
-    if (
-        len(node.outputs) > tensor_idx
-        and len(node.outputs[tensor_idx].outputs) > consumer_idx
-    ):
+    if len(node.outputs) > tensor_idx and len(node.outputs[tensor_idx].outputs) > consumer_idx:
         return node.o(consumer_idx, tensor_idx)
     return None
-
-
-def export_to_onnx_with_external_data(
-    graph: gs.Graph,
-    output_path: str,
-    do_type_check=True,
-    all_tensors_to_one_file: bool = True,
-    location: Optional[str] = None,
-    size_threshold: int = 1024,
-    convert_attribute: bool = False,
-    **kwargs,
-) -> None:
-    """
-    Exports an onnx-graphsurgeon Graph to an ONNX model with external data.
-
-    Args:
-        graph (Graph): The graph to export
-        output_path (str): The path to save ONNX file at.
-            (The base directory will be automatically created if it doesn't exist.)
-        do_type_check (bool): Whether to check that input and output tensors have data types defined, and fail if not.
-        kwargs: Additional arguments to onnx.helper.make_model
-
-    Returns:
-        ModelProto: A corresponding ONNX model.
-    """
-    onnx_graph = OnnxExporter.export_graph(graph, do_type_check=do_type_check)
-    base_path = os.path.dirname(output_path)
-    if location is None:
-        base_name = os.path.basename(output_path)
-        location = f"{os.path.splitext(base_name)[0]}.bin"
-    os.makedirs(base_path, exist_ok=True)
-    convert_graph_to_external_data(
-        onnx_graph,
-        base_path=base_path,
-        all_tensors_to_one_file=all_tensors_to_one_file,
-        size_threshold=size_threshold,
-        convert_attribute=convert_attribute,
-        location=location,
-    )
-
-    if "opset_imports" not in kwargs:
-        if graph.import_domains is None:
-            kwargs["opset_imports"] = [onnx.helper.make_opsetid("", graph.opset)]
-        else:
-            kwargs["opset_imports"] = graph.import_domains
-
-    model = onnx.helper.make_model(onnx_graph, **kwargs)
-    model.producer_name = graph.producer_name
-    model.producer_version = graph.producer_version
-
-    onnx.save(
-        model,
-        output_path,
-        location=location,
-        save_as_external_data=True,
-        size_threshold=size_threshold,
-    )
-
-
-def convert_graph_to_external_data(
-    graph: GraphProto,
-    base_path: str,
-    all_tensors_to_one_file: bool = True,
-    location: Optional[str] = None,
-    size_threshold: int = 1024,
-    convert_attribute: bool = False,
-) -> None:
-    """
-    Call to set all tensors with raw data as external data. This call should preceed 'save_model'.
-    'save_model' saves all the tensors data as external data after calling this function.
-
-    Arguments:
-        graph (GraphProto): Graph to be converted.
-        all_tensors_to_one_file (bool): If true, save all tensors to one external file specified by location.
-            If false, save each tensor to a file named with the tensor name.
-        location: specify the external file that all tensors to save to.
-            If not specified, will use the model name.
-        size_threshold: Threshold for size of data. Only when tensor's data is >= the size_threshold it will be
-            converted to external data. To convert every tensor with raw data to external data set size_threshold=0.
-        convert_attribute (bool): If true, convert all tensors to external data
-                       If false, convert only non-attribute tensors to external data
-    """
-    tensors = (
-        _get_all_tensors_from_graph(graph)
-        if convert_attribute
-        else _get_initializer_tensors_from_graph(graph)
-    )
-
-    if all_tensors_to_one_file:
-        file_name = str(uuid.uuid1())
-        if location:
-            file_name = location
-        for tensor in tensors:
-            if (
-                tensor.HasField("raw_data")
-                and sys.getsizeof(tensor.raw_data) >= size_threshold
-            ):
-                set_external_data(tensor, file_name)
-    else:
-        for tensor in tensors:
-            if (
-                tensor.HasField("raw_data")
-                and sys.getsizeof(tensor.raw_data) >= size_threshold
-            ):
-                tensor_location = tensor.name
-                if not _is_valid_filename(tensor_location):
-                    tensor_location = str(uuid.uuid1())
-                set_external_data(tensor, tensor_location)
-
-    for tensor in _get_all_tensors_from_graph(graph):
-        # Writing to external data happens in 2 passes:
-        # 1. Tensors with raw data which pass the necessary conditions (size threshold etc) are marked for serialization
-        # 2. The raw data in these tensors is serialized to a file
-        # Thus serialize only if tensor has raw data and it was marked for serialization
-        if uses_external_data(tensor) and tensor.HasField("raw_data"):
-            save_external_data(tensor, base_path=base_path)
-            tensor.ClearField("raw_data")
-
-
-def _get_all_tensors_from_graph(graph: GraphProto) -> Iterable[TensorProto]:
-    return chain(
-        _get_initializer_tensors_from_graph(graph),
-        _get_attribute_tensors_from_graph(graph),
-    )
 
 
 def get_defining_op_type(tensor: TensorType) -> Optional[str]:

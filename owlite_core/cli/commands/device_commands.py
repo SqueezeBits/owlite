@@ -2,8 +2,8 @@
 # pylint: disable=unnecessary-lambda, too-few-public-methods
 from argparse import Namespace, _SubParsersAction
 
-from . import BaseOwLiteCLICommand
-from .device import (
+from .. import BaseOwLiteCLICommand
+from ..device import (
     add_manager,
     connect_device,
     disconnect_device,
@@ -33,7 +33,7 @@ class DeviceCommands(BaseOwLiteCLICommand):
             "--name",
             "-n",
             type=str,
-            default="DEFAULT",
+            default="NEST",
             help="device manager name",
         )
         device_parser.add_argument(

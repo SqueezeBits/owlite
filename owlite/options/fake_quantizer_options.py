@@ -1,10 +1,10 @@
-"""Options for configuring the class FakeQuantizer"""
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from owlite_core.logger import log, suppress_owlite_warnings
+
 from ..enums.ptq_calibration_type import PTQCalibrationType
 from ..enums.qat_backward_type import QATBackwardType
-from ..logger import log, suppress_owlite_warnings
 from .options_mixin import OptionsMixin
 
 
@@ -51,10 +51,11 @@ class FakeQuantizerOptions(OptionsMixin):
     def check_percentile(self, percentile: Optional[float]) -> bool:
         """
         if `ptq_calibration="percentile"`, `percentile` value must be provided
-        and it must be between 0 and 100 (exclusive). Otherwise, its value is ignored.
+        and it must be strictly greater than 0 and less than or equal to 100.
+        Otherwise, its value is ignored.
         """
         if self.ptq_calibration == PTQCalibrationType.percentile:
-            return percentile is not None and 0 < percentile < 100
+            return percentile is not None and 0 < percentile <= 100
         if percentile is not None:
             log.warning(
                 '`percentile` is used only when `ptq_calibration="percentile"`.'

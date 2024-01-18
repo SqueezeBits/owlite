@@ -1,4 +1,3 @@
-"""Pre- and post-processing for torch.fx.Node for pattern matching"""
 # pylint: disable=missing-function-docstring
 import operator
 

@@ -1,4 +1,4 @@
-"""Options for quantization"""
+from .dynamic_input_options import DynamicAxisOptions, DynamicInputOptions, DynamicSizeOptions
 from .fake_quantizer_options import FakeQuantizerOptions
 from .onnx_export_options import ONNXExportOptions
 from .quantization_options import GraphQuantizationOptions, NodeQuantizationOptions

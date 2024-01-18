@@ -1,7 +1,6 @@
-""" Model quantize """
-
-
 from torch.fx.graph_module import GraphModule
+
+from owlite_core.logger import log
 
 from .backend.fx.node import find_constant_nodes
 from .backend.fx.node_configurator import NodeConfigurator
@@ -10,7 +9,6 @@ from .backend.fx.transforms import (
     fuse_redundant_quantizers,
 )
 from .enums import OwLiteStatus
-from .logger import log
 from .nn.fake_quantizer import enable_quantizers
 from .options import GraphQuantizationOptions
 

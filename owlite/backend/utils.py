@@ -1,28 +1,23 @@
-"""Utilities for tracing torch.fx.Graph and for exporting torch.nn.Module into ONNX"""
 # ruff: noqa: E741
-import inspect
 import json
 from collections import Counter, OrderedDict
-from collections.abc import Callable, Iterable
-from functools import reduce
+from collections.abc import Iterable
 from numbers import Number
 from typing import Any, Optional, Union
 
 import numpy as np
-import onnx
 import onnx_graphsurgeon as gs
 import torch
-from onnx import ModelProto, TensorProto, TypeProto, ValueInfoProto
+from onnx import ModelProto, TensorProto
 from onnx import NodeProto as ONNXNode
 from onnx_graphsurgeon.importers.onnx_importer import get_numpy_type
 from torch.fx.graph_module import GraphModule
 from torch.fx.node import Node as FXNode
 from torch.fx.node import Target as FXTarget
 
-from ..logger import log
+from owlite_core.logger import log
 
 AnyNode = Union[FXNode, ONNXNode, gs.Node]
-ONNXInputSignature = list[tuple[str, list[Union[str, int]]]]
 
 RTOL_FP16 = np.finfo(np.float16).smallest_normal.item()
 RTOL_FP32 = 1.0e-5
@@ -393,83 +388,3 @@ def is_onnx_proto_data_external(onnx_proto: ModelProto) -> bool:
     """
     external_count = [i.data_location for i in onnx_proto.graph.initializer].count(TensorProto.EXTERNAL)
     return 2 * external_count >= len(onnx_proto.graph.initializer)
-
-
-def map_signature(func: Callable, *args: Any, **kwargs: Any) -> list[tuple[str, Any]]:
-    """Maps the parameter names of a function to the corresponding values passed in args and kwargs.
-
-    This function returns a list of tuples, where each tuple contains a parameter name and its corresponding value.
-    If a parameter name exists in the kwargs dictionary, its value is taken from there. Otherwise, the values are taken
-    in order from the args tuple. If there are no values left in args or kwargs, the default value of the parameter
-    (if it exists) is used.
-
-    Args:
-        func (Callable): Function to inspect.
-        args (Any): Positional arguments.
-        kwargs (Any): Keyword arguments.
-
-    Returns:
-        list[tuple[str, Any]]: List of tuples mapping parameter names to their values.
-
-    Note:
-        This function assumes that `args` and `kwargs` match the exact function signature,
-        in order and length. If they don't, the result may not be as expected or exceptions might occur.
-    """
-    sig = inspect.signature(func)
-    params = sig.parameters
-
-    mapped = []
-
-    args_iter = iter(args)
-    for name, param in params.items():
-        if name in kwargs:
-            mapped.append((name, kwargs[name]))
-        elif args:
-            mapped.append((name, next(args_iter, param.default)))
-        else:
-            mapped.append((name, param.default))
-
-    return mapped
-
-
-def extract_tensor_shape(
-    value_info_or_tensor_type_proto: Union[ValueInfoProto, TypeProto.Tensor]
-) -> Optional[list[Union[str, int]]]:
-    """Extracts tensor shape information.
-
-    Args:
-        value_info_or_tensor_type_proto (Union[ValueInfoProto, TypeProto.Tensor]): protobuf to extract shape from.
-
-    Returns:
-        Optional[list[Union[str, int]]]: Extracted shape information if exists None otherwise.
-    """
-    assert isinstance(value_info_or_tensor_type_proto, (ValueInfoProto, TypeProto.Tensor))
-
-    if isinstance(value_info_or_tensor_type_proto, ValueInfoProto):
-        value_info_or_tensor_type_proto = value_info_or_tensor_type_proto.type.tensor_type
-
-    if not value_info_or_tensor_type_proto.shape.dim:
-        return None
-
-    tensor_type = value_info_or_tensor_type_proto
-    return reduce(lambda acc, cur: acc + [cur.dim_param or cur.dim_value], tensor_type.shape.dim, [])
-
-
-def extract_input_signature_from_onnx_proto(onnx_proto_or_path: Union[ModelProto, str]) -> ONNXInputSignature:
-    """Extracts input signature from onnx proto.
-
-    Args:
-        onnx_proto (Union[ModelProto, str]): onnx model or path of an onnx model.
-
-    Returns:
-        list[tuple[str, list[Union[str, int]]]]: list of tuples of input tensor name and shape.
-    """
-    onnx_proto = None
-    if isinstance(onnx_proto_or_path, str):
-        with open(onnx_proto_or_path, "rb") as f:
-            onnx_proto = onnx.load(f, load_external_data=False)
-    else:
-        onnx_proto = onnx_proto_or_path
-
-    shape = extract_tensor_shape
-    return reduce(lambda acc, cur: acc + [(cur.name, shape(cur.type.tensor_type))], onnx_proto.graph.input, [])

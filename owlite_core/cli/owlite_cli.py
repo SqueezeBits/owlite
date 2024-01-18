@@ -1,9 +1,11 @@
 """CLI script to manage OwLite commands using argparse."""
 from argparse import ArgumentParser
 
-from .device_commands import DeviceCommands
-from .url_commands import UrlCommands
-from .user_commands import UserCommands
+from ..exceptions import DeviceError, LoginError
+from ..logger import log
+from .commands.device_commands import DeviceCommands
+from .commands.url_commands import UrlCommands
+from .commands.user_commands import UserCommands
 
 
 def main() -> None:
@@ -29,7 +31,8 @@ def main() -> None:
     owlite_cli = args.func(args)
     try:
         owlite_cli.run()
-    except Exception:  # pylint: disable=broad-exception-caught
+    except (LoginError, DeviceError) as e:
+        log.debug(e)
         return
 
 

@@ -1,13 +1,12 @@
-"""Create a calibrator and set the calibration"""
-
 from types import TracebackType
 from typing import Optional
 
 from torch.nn.parallel import DataParallel, DistributedDataParallel
 
+from owlite_core.logger import log
+
 from .backend.fx.types import GraphModuleOrDataParallel
 from .enums import OwLiteStatus
-from .logger import log
 from .nn.fake_quantizer import FakeQuantizer
 
 
@@ -20,8 +19,8 @@ def prepare_for_calibration(model: GraphModuleOrDataParallel) -> None:
     log.info("Preparing for calibration")
     for _, module in model.named_modules(remove_duplicate=True):
         if isinstance(module, (FakeQuantizer,)):
-            module.calibrator.prepare()
             module.disable()
+            module.calibrator.prepare()
     log.info("All fake quantizers in the model are now ready for calibration")
     log.info("Calibrating the model")
 

@@ -1,4 +1,3 @@
-"""Custom comparison function for two ONNX protos"""
 import os
 from collections import OrderedDict
 from typing import Optional, Union
@@ -8,7 +7,8 @@ import onnx
 import onnx.checker
 import onnxruntime as rt
 
-from ...logger import log
+from owlite_core.logger import log
+
 from ..utils import compare_nested_outputs
 
 Tensors = dict[str, np.ndarray]
@@ -48,9 +48,7 @@ def compare(
     def get_shape_from_value_info_proto(v: onnx.ValueInfoProto) -> list[int]:
         return [dim.dim_value for dim in v.type.tensor_type.shape.dim]
 
-    def get_value_info_all(
-        m: onnx.ModelProto, name: str
-    ) -> Optional[onnx.ValueInfoProto]:
+    def get_value_info_all(m: onnx.ModelProto, name: str) -> Optional[onnx.ValueInfoProto]:
         for v in m.graph.value_info:
             if v.name == name:
                 return v
@@ -107,15 +105,10 @@ def compare(
         return size
 
     def get_input_names(model: onnx.ModelProto) -> list[str]:
-        input_names = list(
-            {ipt.name for ipt in model.graph.input}
-            - {x.name for x in model.graph.initializer}
-        )
+        input_names = list({ipt.name for ipt in model.graph.input} - {x.name for x in model.graph.initializer})
         return input_names
 
-    def generate_rand_input(
-        model: Union[str, onnx.ModelProto], input_shapes: Optional[TensorShapes] = None
-    ):
+    def generate_rand_input(model: Union[str, onnx.ModelProto], input_shapes: Optional[TensorShapes] = None):
         if input_shapes is None:
             input_shapes = {}
         if isinstance(model, str):
@@ -173,9 +166,7 @@ def compare(
         outputs = [x.name for x in sess.get_outputs()]
         run_options = rt.RunOptions()
         run_options.log_severity_level = 3
-        res = OrderedDict(
-            zip(outputs, sess.run(outputs, inputs, run_options=run_options))
-        )
+        res = OrderedDict(zip(outputs, sess.run(outputs, inputs, run_options=run_options)))
         return res
 
     if input_shapes is None:
@@ -190,8 +181,6 @@ def compare(
         res_ori = forward(model_ori, inputs, custom_lib)
         res_opt = forward(model_opt, inputs, custom_lib)
 
-        if not compare_nested_outputs(
-            res_opt, res_ori, rtol=rtol, atol=atol, equal_nan=equal_nan
-        ):
+        if not compare_nested_outputs(res_opt, res_ori, rtol=rtol, atol=atol, equal_nan=equal_nan):
             return False
     return True
