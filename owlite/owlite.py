@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Optional, Union
 
@@ -7,7 +8,6 @@ import torch
 from torch.fx.graph_module import GraphModule
 from torch.nn.parallel import DataParallel, DistributedDataParallel
 
-from owlite_core.cli.device import OWLITE_DEVICE_NAME
 from owlite_core.constants import OWLITE_REPORT_URL
 from owlite_core.logger import log
 from owlite_core.owlite_settings import OWLITE_SETTINGS
@@ -32,7 +32,12 @@ class OwLite:
     module_args: Optional[tuple[Any, ...]] = None
     module_kwargs: Optional[dict[str, Any]] = None
 
-    def convert(self, model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphModule:
+    def convert(
+        self,
+        model: torch.nn.Module,
+        *args: Any,
+        **kwargs: Any,
+    ) -> GraphModule:
         """Converts input model to compressed model.
 
         Args:
@@ -139,7 +144,7 @@ class OwLite:
         if isinstance(dynamic_axis_options, dict):
             dynamic_axis_options = DynamicAxisOptions(dynamic_axis_options)
             keys_repr = ", ".join(f"'{key}'" for key in dynamic_axis_options.keys())
-            log.info(f"dynamic_axis_options provided for the following inputs: {keys_repr}")
+            log.info(f"`dynamic_axis_options` provided for the following inputs: {keys_repr}")
 
         if isinstance(self.target, Baseline):
             if dynamic_axis_options is not None:
@@ -147,7 +152,7 @@ class OwLite:
                     "The `dynamic_axis_options` provided for baseline will be ignored. "
                     "To export baseline model with dynamic input, "
                     "please create an experiment without compression configuration "
-                    "and export it with `dynamic_axes`"
+                    "and export it with `dynamic_axis_options`"
                 )
             proto = self.target.export(
                 model, self.module_args, self.module_kwargs, onnx_export_options=onnx_export_options
@@ -229,8 +234,8 @@ class OwLite:
         if isinstance(self.target, Experiment) and isinstance(self.target.input_signature, DynamicSignature):
             if dynamic_input_options is None:
                 log.error(
-                    "The `dynamic_input_options` for the experiment has `dynamic_axis_options`. "
-                    "Try owl.benchmark(dynamic_axis_options={...})"
+                    "The `dynamic_input_options` for the experiment has `dynamic_input_options`. "
+                    "Try `owl.benchmark(dynamic_input_options={...})`"
                 )
                 raise RuntimeError("Dynamic options failed")
             if isinstance(dynamic_input_options, dict):
@@ -295,10 +300,23 @@ def init(
         log.error("Please log in using 'owlite login'. Account not found on this device")
         raise RuntimeError("OwLite token not found")
 
-    if OWLITE_DEVICE_NAME is None:
-        log.warning("Connected device not found. Please connect to a device by 'owlite device connect --name (name)'")
+    if OWLITE_SETTINGS.connected_device is None:
+        log.warning(
+            "Connected device not found. "
+            "You will be automatically connected to the default NEST device as you are subscribed to the free plan. "
+            "Please connect to a specific device using 'owlite device connect --name (name)' if needed"
+        )
+
     else:
-        log.info(f"Connected device: {OWLITE_DEVICE_NAME}")
+        log.info(f"Connected device: {OWLITE_SETTINGS.connected_device.name}")
+
+    validate_names(project=project, baseline=baseline, experiment=experiment, duplicate_from=duplicate_from)
+    if description and len(description) > 140:
+        log.error(
+            "The project description should consist of at most 140 characters. "
+            "Note that the description is not required for loading an existing project"
+        )
+        raise ValueError("Description length exceeds limit")
 
     if experiment == baseline:
         log.error(
@@ -342,3 +360,28 @@ def init(
         log.info(f"Experiment data will be saved in {target.home}")
 
     return OwLite(target)
+
+
+def validate_names(**kwargs: Any) -> None:
+    """Validate a list of names.
+
+    Args:
+        **kwargs: A dictionary where keys are identifiers and values are names to validate.
+
+    Raises:
+        ValueError: If any name is invalid.
+    """
+    invalid_keys = []
+    regex = r"^[a-zA-Z0-9()\-_@:*&]+$"
+    for key, name in kwargs.items():
+        if name is None:
+            continue
+        if not re.fullmatch(regex, name):
+            invalid_keys.append(key)
+    if len(invalid_keys) > 0:
+        invalid_items = ", ".join(f"{key}={kwargs[key]}" for key in invalid_keys)
+        log.error(
+            f"The following names do not meet the requirement: {invalid_items}. "
+            "A valid name must consist of alphanumeric characters or special characters chosen from ()-_@:*&"
+        )
+        raise ValueError("Invalid name")

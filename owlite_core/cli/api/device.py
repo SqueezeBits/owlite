@@ -1,7 +1,6 @@
 import requests
 
 from ...api_base import APIBase
-from ...constants import NEST_URL
 from ...exceptions import DeviceError, LoginError
 from ...logger import log
 from ...owlite_settings import OWLITE_SETTINGS
@@ -20,7 +19,7 @@ def get_devices(url: str) -> list:
         list: A list includes device names connected to device manager.
     """
     tokens = OWLITE_SETTINGS.tokens
-    if not tokens and url == NEST_URL:
+    if not tokens and url == OWLITE_SETTINGS.base_url.NEST:
         log.error("Using OwLite default device manager needs login. Please log in using 'owlite login'")
         raise LoginError("Not authenticated")
 

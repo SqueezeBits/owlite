@@ -72,10 +72,22 @@ class Experiment(Benchmarkable):
         Returns:
             Experiment: The newly created experiment
         """
-        _ = MAIN_API_BASE.post(
-            "/projects/runs",
-            json=baseline.payload(run_name=name),
-        )
+        try:
+            _ = MAIN_API_BASE.post(
+                "/projects/runs",
+                json=baseline.payload(run_name=name),
+            )
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 400:
+                err_msg = e.response.json()
+                if "is invalid" in err_msg["detail"]:
+                    log.error(
+                        "Baseline model is invalid. "
+                        "You can only create an experiment with an uploaded baseline model. "
+                        "Please check if OwLite successfully uploaded the baseline model. "
+                        "If not, try using `owl.export(model).`"
+                    )
+            raise e
         experiment = cls(name=name, baseline=baseline, has_config=False)
         log.info(f"Created a new {experiment}")
         baseline.experiments[name] = experiment

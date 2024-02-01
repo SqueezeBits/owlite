@@ -144,6 +144,7 @@ torch.fx.GraphModule._replicate_for_data_parallel = patched_replicate_for_data_p
 
 # See https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html#torch-nn-functional-scaled-dot-product-attention
 # [SQZB] torch.nn.functional.scaled_dot_product_attention cannot be exported to ONNX
+@patch(torch.nn.functional.scaled_dot_product_attention)
 def slow_scaled_dot_product_attention(
     query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False
 ) -> Tensor:
@@ -170,6 +171,7 @@ def slow_scaled_dot_product_attention(
     attn_weight = F.dropout(attn_weight, dropout_p).to(value.dtype)
     return attn_weight @ value
 
+torch.nn.functional.scaled_dot_product_attention = slow_scaled_dot_product_attention
 
 # [SQZB] torch.nn.functional._mha_shape_check causes the error: "torch.* op returned non-Tensor bool"
 # Made it a local function with no changes in its contents from torch==2.1.0 (same as torch==2.0.0)

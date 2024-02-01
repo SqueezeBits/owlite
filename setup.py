@@ -26,7 +26,7 @@ def is_cygwin() -> bool:
 
 def requirements() -> list[str]:
     return [
-        "torch>=2",
+        "torch>=2.0,<2.2",
         "onnxruntime",
         "onnxsim",
         "onnx_graphsurgeon",
@@ -40,7 +40,7 @@ def requirements() -> list[str]:
 
 setup(
     name="owlite",
-    version="v1.1",
+    version="1.1.1",
     description="OwLite - No-Code AI compression Toolkit",
     url="https://bitbucket.org/squeezebits/owlitetorch",
     author="SqueezeBits Inc.",

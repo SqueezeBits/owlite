@@ -1,6 +1,8 @@
+__version__ = "1.1.1"
+
 from owlite_core.logger import log
 
-from . import api, calib, nn
+from . import api, backend, calib, nn
 from .backend import fx, onnx
 from .calibrators import (
     CalibrationContext,

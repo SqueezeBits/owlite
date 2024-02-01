@@ -6,7 +6,7 @@ from owlite_core.logger import log
 
 from ..owlite_settings import OWLITE_SETTINGS
 
-URL_NAME_LIST = ["FRONT", "MAIN", "DOVE"]
+URL_NAME_LIST = ["FRONT", "MAIN", "DOVE", "NEST"]
 
 
 def save_base_url(name: str, url: str) -> None:

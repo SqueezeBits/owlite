@@ -1,15 +1,15 @@
 from typing import Callable, Union
 
 import torch
-from torch import IntTensor, Tensor
+from torch import Tensor
 
 
 def fake_quantize(
-    inputs: Union[Tensor, float],
-    step_size: torch.Tensor,
-    zero_point: torch.Tensor,
-    quant_min: Union[IntTensor, int],
-    quant_max: Union[IntTensor, int],
+    inputs: Tensor,
+    step_size: Tensor,
+    zero_point: Tensor,
+    quant_min: int,
+    quant_max: int,
     per_channel: Union[torch.BoolTensor, bool],
     axis: int = 0,
 ) -> torch.Tensor:
@@ -42,10 +42,9 @@ def fake_quantize(
         inputs,
         step_size,
         # `torch.fake_quantize_per_tensor_affine` expects `zero_point` to be either int32 or int64
-        # pylint: disable-next=line-too-long
-        # (See https://pytorch.org/docs/stable/generated/torch.fake_quantize_per_tensor_affine.html#torch-fake-quantize-per-tensor-affine)
+        # (See https://pytorch.org/docs/stable/generated/torch.fake_quantize_per_tensor_affine.html)
         # while `torch.fake_quantize_per_channel_affine` doesn't
-        zero_point.to(torch.int32).to(zero_point.device),
+        zero_point,
         quant_min=quant_min,
         quant_max=quant_max,
     )
@@ -53,12 +52,12 @@ def fake_quantize(
 
 FakeQuantFunc = Callable[
     [
-        Union[Tensor, float],  # inputs
+        Tensor,  # inputs
         Tensor,  # step_size
         Tensor,  # zp
         Union[Tensor, float],  # grad_scale
-        Union[IntTensor, int],  # quant_min
-        Union[IntTensor, int],  # quant_max
+        int,  # quant_min
+        int,  # quant_max
         Union[torch.BoolTensor, bool],  # per_channel
         bool,  # compensate_zp
     ],

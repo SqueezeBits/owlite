@@ -77,9 +77,16 @@ class APIBase:
                         assert tokens is not None
                         refresh_token = tokens.refresh_token
 
-                        refresh_res = MAIN_API_BASE.post("/login/refresh", json={"refresh_token": refresh_token})
-                        assert isinstance(refresh_res, dict)
+                        refresh_res = requests.post(
+                            f"{OWLITE_SETTINGS.base_url.MAIN}/login/refresh",
+                            json={"refresh_token": refresh_token},
+                            timeout=self.default_timeout,
+                        )
+                        log.debug(f"Token refresh request : {refresh_res.status_code}")
+                        if not refresh_res.ok:
+                            refresh_res.raise_for_status()
 
+                        assert isinstance(refresh_res, dict)
                         OWLITE_SETTINGS.tokens = Tokens(
                             refresh_res["access_token"], refresh_res["refresh_token"]
                         )  # token refreshed

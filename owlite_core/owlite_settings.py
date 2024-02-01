@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import BaseURLs, ClassDecoder, ClassEncoder, Device, DeviceManager, Tokens, owlite_cache_dir, read_text
-from .constants import NEST_URL
+from .logger import log
 
 
 class OwLiteSettings:
@@ -62,16 +62,29 @@ class OwLiteSettings:
         Returns:
             dict[str, DeviceManager]: Device manager dictionary,
         """
-        cache_content = read_text(self.devices_cache)
-        if cache_content:
-            cached_managers: dict[str, DeviceManager] = json.loads(cache_content, cls=ClassDecoder)
-            assert cached_managers
+
+        def _backward_compatibility(cached_managers: dict) -> dict:
+            cached_managers.pop("DEFAULT", None)
+            cached_managers.pop("NEST", None)
+            for key, value in cached_managers.items():
+                if isinstance(value, str):
+                    new_value = DeviceManager(name=key, url=value)
+                    cached_managers[key] = new_value
+            self.devices_cache.write_text(json.dumps(cached_managers, cls=ClassEncoder), encoding="utf-8")
             return cached_managers
 
-        default_manager = DeviceManager("NEST", NEST_URL)
-        default_dict = {"NEST": default_manager}
-        assert isinstance(default_dict, dict)
-        return default_dict
+        default_manager = DeviceManager("NEST", self.base_url.NEST)
+        registered_managers = {"NEST": default_manager}
+
+        cache_content = read_text(self.devices_cache)
+        if cache_content is None:
+            return registered_managers
+
+        cached_managers: dict[str, DeviceManager] = json.loads(cache_content, cls=ClassDecoder)
+        cached_managers = _backward_compatibility(cached_managers)
+        assert cached_managers
+        registered_managers.update(cached_managers)
+        return registered_managers
 
     def add_manager(self, manager: DeviceManager) -> None:
         """Adds new device to the cache
@@ -81,6 +94,7 @@ class OwLiteSettings:
         """
         manager_dict = self.managers
         manager_dict[manager.name] = manager
+        manager_dict.pop("NEST")
         self.devices_cache.write_text(json.dumps(manager_dict, cls=ClassEncoder), encoding="utf-8")
 
     def remove_manager(self, name: str) -> None:
@@ -91,7 +105,11 @@ class OwLiteSettings:
         """
         manager_dict = self.managers
         manager_dict.pop(name, None)
-        self.devices_cache.write_text(json.dumps(manager_dict, cls=ClassEncoder), encoding="utf-8")
+        manager_dict.pop("NEST")
+        if bool(manager_dict):
+            self.devices_cache.write_text(json.dumps(manager_dict, cls=ClassEncoder), encoding="utf-8")
+        else:
+            self.devices_cache.unlink(missing_ok=True)
 
     @property
     def connected_device(self) -> Optional[Device]:
@@ -104,6 +122,9 @@ class OwLiteSettings:
         connected_device = read_text(self.connected_cache)
         if connected_device:
             device = json.loads(connected_device, cls=ClassDecoder)
+            if not isinstance(device, Device):
+                log.warning("Your device connection is outdated. Please retry `owlite device connect --name (name)`")
+                self.connected_device = None
             return device
         return None
 

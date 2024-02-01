@@ -19,40 +19,7 @@ from onnx.external_data_helper import (
 )
 from onnx_graphsurgeon.exporters.onnx_exporter import OnnxExporter
 
-OPS_TO_SAVE_PARAMETERS_INTERNALLY = (
-    "Col2Im",
-    "Compress",
-    "ConstantOfShape",
-    "CumSum",
-    "Expand",
-    "Gather",
-    "GatherElements",
-    "GatherND",
-    "GridSample",
-    "Pad",
-    "ReduceL1",
-    "ReduceL2",
-    "ReduceLogSum",
-    "ReduceLogSumExp",
-    "ReduceMax",
-    "ReduceMean",
-    "ReduceMin",
-    "ReduceProd",
-    "ReduceSum",
-    "ReduceSumSquare",
-    "Reshape",
-    "Resize",
-    "Scatter",
-    "ScatterElements",
-    "ScatterND",
-    "Shape",
-    "Slice",
-    "Split",
-    "Squeeze",
-    "Tile",
-    "TopK",
-    "Unsqueeze",
-)
+from ..config import ONNX_OPS_TO_SAVE_PARAMETERS_INTERNALLY
 
 
 def _get_all_tensors_from_graph(graph: GraphProto) -> Iterable[TensorProto]:
@@ -152,7 +119,7 @@ def convert_graph_to_external_data(
     tensors = _get_all_tensors_from_graph(graph) if convert_attribute else _get_initializer_tensors_from_graph(graph)
 
     tensor_names_to_save_internally: list[str] = reduce(
-        lambda names, node: names + list(node.input) if node.op_type in OPS_TO_SAVE_PARAMETERS_INTERNALLY else names,
+        lambda acc, cur: acc + list(cur.input) if cur.op_type in ONNX_OPS_TO_SAVE_PARAMETERS_INTERNALLY else acc,
         graph.node,
         [],
     )

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import requests
 
 from ...api_base import APIBase
+from ...api_enums import PricingTier
 from ...constants import OWLITE_API_DEFAULT_TIMEOUT
 from ...exceptions import LoginError
 from ...logger import log
@@ -16,7 +17,7 @@ class UserInfo:
     """User Information"""
 
     name: str
-    tier: int
+    tier: PricingTier
 
 
 def login(email: str, password: str) -> dict[str, str]:
@@ -50,7 +51,7 @@ def login(email: str, password: str) -> dict[str, str]:
             }
             if resp and resp["detail"] in login_failed_dict:
                 log.error(login_failed_dict[resp["detail"]])
-            raise LoginError
+            raise LoginError("Login failed")
 
         response.raise_for_status()
 
@@ -73,8 +74,13 @@ def whoami() -> UserInfo:
         raise LoginError("OwLite token not found")
 
     main_api = APIBase(OWLITE_SETTINGS.base_url.MAIN, "OWLITE_LOGIN_API")
-    resp = main_api.post("/login/whoami")
+    try:
+        resp = main_api.post("/login/whoami")
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 403:
+            raise LoginError("Not authenticated") from e
+        raise e
     assert isinstance(resp, dict)
-    current_user = UserInfo(name=str(resp["username"]), tier=int(resp["tier"]))
+    current_user = UserInfo(name=str(resp["username"]), tier=PricingTier(resp["tier"]))
     log.debug(f"user info: {current_user.name}, {current_user.tier}")
     return current_user

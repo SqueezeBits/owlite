@@ -10,19 +10,12 @@ from .node import get_target_module
 
 
 def serialize(graph_module: GraphModule) -> str:
-    r"""Exports a model into ONNX format.
-
-    If ``model`` is not a :class:`torch.jit.ScriptModule` nor a
-    :class:`torch.jit.ScriptFunction`, this runs
-    ``model`` once in order to convert it to a TorchScript graph to be exported
-    (the equivalent of :func:`torch.jit.trace`). Thus this has the same limited support
-    for dynamic control flow as :func:`torch.jit.trace`.
+    """Serializes model into textual form.
 
     Args:
-        model (:class:`torch.nn.Module`, :class:`torch.jit.ScriptModule` or :class:`torch.jit.ScriptFunction`):
-            the model to be exported.
+        model (GraphModule): the model to be serialized
 
-    Retruns:
+    Returns:
         serialized (str): serialized fx graph
     """
     graph = graph_module.graph
@@ -45,7 +38,5 @@ def serialize(graph_module: GraphModule) -> str:
 
     if log.level <= logging.DEBUG:
         print(serialized)
-
-    # add some encoding maybe?
 
     return serialized

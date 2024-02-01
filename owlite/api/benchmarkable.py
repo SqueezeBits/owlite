@@ -13,19 +13,22 @@ import requests
 from torch.fx.graph_module import GraphModule
 
 from owlite_core.api_base import MAIN_API_BASE, APIBase
+from owlite_core.api_enums import BenchmarkStatus, PricingTier
 from owlite_core.cli.api.login import whoami
-from owlite_core.cli.device import CONNECTED_DEVICE, OWLITE_DEVICE_NAME
-from owlite_core.constants import NEST_URL, OWLITE_REPORT_URL
+from owlite_core.cli.device import connect_free_device
+from owlite_core.constants import OWLITE_REPORT_URL
 from owlite_core.logger import log
+from owlite_core.owlite_settings import OWLITE_SETTINGS
 
 from ..backend.onnx.export import export
 from ..backend.onnx.signature import DynamicSignature, Signature
-from ..enums.owlite_api import BenchmarkStatus, PricingTier
 from ..options import DynamicAxisOptions, ONNXExportOptions
 from .utils import download_file_from_url, upload_file_to_url
 
 DEVICE_API_BASE: APIBase = APIBase(
-    CONNECTED_DEVICE.manager.url if CONNECTED_DEVICE else NEST_URL,  # type: ignore
+    OWLITE_SETTINGS.connected_device.manager.url
+    if OWLITE_SETTINGS.connected_device
+    else OWLITE_SETTINGS.base_url.NEST,  # type: ignore
     "OWLITE_DEVICE_API_BASE",
 )
 
@@ -51,6 +54,28 @@ class Benchmarkable:
         """Pricing tier of current user"""
         userinfo = whoami()
         return PricingTier(userinfo.tier)
+
+    @property
+    def device(self) -> str:
+        """Gets the connected device's name.
+
+        If none found, connects to a free device for free plan users; raises an error for paid plan users.
+
+        Returns:
+            str: The name of the connected device.
+
+        Raises:
+            RuntimeError: If no device is found and the user is on a paid tier.
+        """
+        connected_device = OWLITE_SETTINGS.connected_device
+        if OWLITE_SETTINGS.connected_device is None:
+            if not self.tier.paid:
+                connected_device = connect_free_device()
+            else:
+                log.error("Device not found. Please connect to a device using 'owlite device connect --name (name)'")
+                raise RuntimeError("Device not found")
+        assert connected_device
+        return connected_device.name
 
     @property
     def input_signature(self) -> Optional[Union[Signature, DynamicSignature]]:
@@ -154,7 +179,7 @@ class Benchmarkable:
 
     def orchestrate_trt_benchmark(self) -> None:
         """Orchestrates the end-to-end TensorRT benchmark pipeline."""
-        if OWLITE_DEVICE_NAME is None:
+        if self.device is None:
             log.warning(
                 "Cannot initiate TensorRT benchmark. Please connect to a device first "
                 "using 'owlite device connect --name (name)'"
@@ -177,7 +202,7 @@ class Benchmarkable:
             self.download_trt_engine()
         else:
             log.info(
-                "Your current account plan (free tier) is not eligible for downloading TensorRT engines. "
+                "Your current account plan (free) is not eligible for downloading TensorRT engines. "
                 "Please consider upgrading your plan for the seamless experience that OwLite can provide. "
                 f"However, you can still convert the ONNX at {self.onnx_path} into a TensorRT engine by yourself"
             )
@@ -194,7 +219,7 @@ class Benchmarkable:
         resp = DEVICE_API_BASE.post(
             "/devices/jobs/assign",
             json={
-                "device_name": get_device_name(),
+                "device_name": self.device,
                 "benchmark_key": self.benchmark_key,
             },
         )
@@ -214,7 +239,7 @@ class Benchmarkable:
         res = DEVICE_API_BASE.post(
             "/devices/jobs/queue",
             json={
-                "device_name": get_device_name(),
+                "device_name": self.device,
                 "benchmark_key": self.benchmark_key,
             },
         )
@@ -360,7 +385,7 @@ class Benchmarkable:
             resp = DEVICE_API_BASE.post(
                 "/devices/trt",
                 json={
-                    "device_name": get_device_name(),
+                    "device_name": self.device,
                     "benchmark_key": self.benchmark_key,
                 },
             )
@@ -380,11 +405,11 @@ class Benchmarkable:
 
     def clear_trt_engine(self) -> None:
         """Clear created TensorRT engine on device."""
-        log.debug(f"Clear TensorRT engine on device: {get_device_name()}, benchmark_key: {self.benchmark_key}")
+        log.debug(f"Clear TensorRT engine on device: {self.device}, benchmark_key: {self.benchmark_key}")
         DEVICE_API_BASE.post(
             "/devices/clear",
             json={
-                "device_name": get_device_name(),
+                "device_name": self.device,
                 "benchmark_key": self.benchmark_key,
             },
         )
@@ -409,11 +434,3 @@ class Benchmarkable:
 
     def __str__(self) -> str:
         return self.__repr__()
-
-
-def get_device_name() -> str:
-    """Gets the connected device"""
-    if OWLITE_DEVICE_NAME is None:
-        log.error("Device not found. Please connect to a device using 'owlite device connect --name (name)'")
-        raise RuntimeError("Device not found")
-    return OWLITE_DEVICE_NAME

@@ -147,5 +147,15 @@ def disconnect_device() -> None:
     log.info(f"Disconnected from the device '{connected_device.name}'")
 
 
-CONNECTED_DEVICE = OWLITE_SETTINGS.connected_device
-OWLITE_DEVICE_NAME = CONNECTED_DEVICE.name if CONNECTED_DEVICE else None
+def connect_free_device() -> Device:
+    """Connects to the free device in NEST device manager.
+
+    Returns:
+        Device: connected device name
+    """
+    log.info("Connecting to the free-plan NEST device")
+    manager = OWLITE_SETTINGS.managers["NEST"]
+    assert manager.url
+    device = Device(get_device_list(manager.url)[0], manager)
+    OWLITE_SETTINGS.connected_device = device
+    return device

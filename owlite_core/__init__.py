@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from .constants import (
+    NEST_URL,
     OWLITE_DOVE_API_BASE_URL,
     OWLITE_FRONT_BASE_URL,
     OWLITE_MAIN_API_BASE_URL,
@@ -89,6 +90,7 @@ class BaseURLs:
         "FRONT": OWLITE_FRONT_BASE_URL,
         "MAIN": OWLITE_MAIN_API_BASE_URL,
         "DOVE": OWLITE_DOVE_API_BASE_URL,
+        "NEST": NEST_URL,
     }
 
     def __init__(
@@ -96,11 +98,13 @@ class BaseURLs:
         FRONT: str = _default_urls["FRONT"],  # noqa: N803
         MAIN: str = _default_urls["MAIN"],  # noqa: N803
         DOVE: str = _default_urls["DOVE"],  # noqa: N803
+        NEST: str = _default_urls["NEST"],  # noqa: N803
     ) -> None:
         # pylint: disable=invalid-name
         self.FRONT = FRONT
         self.MAIN = MAIN
         self.DOVE = DOVE
+        self.NEST = NEST
         # pylint: enable=invalid-name
 
     def set(self, name: str, url: Optional[str] = None) -> None:
@@ -138,7 +142,7 @@ class ClassEncoder(json.JSONEncoder):
         if isinstance(o, Device):
             return {"name": o.name, "manager": {"name": o.manager.name, "url": o.manager.url}}
         if isinstance(o, BaseURLs):
-            return {"FRONT": o.FRONT, "MAIN": o.MAIN, "DOVE": o.DOVE}
+            return {"FRONT": o.FRONT, "MAIN": o.MAIN, "DOVE": o.DOVE, "NEST": o.NEST}
         return super().default(o)
 
 
@@ -166,7 +170,9 @@ class ClassDecoder(json.JSONDecoder):
         if "access_token" in dct:
             return Tokens(access_token=dct["access_token"], refresh_token=dct["refresh_token"])
         if "FRONT" in dct:
-            return BaseURLs(FRONT=dct["FRONT"], MAIN=dct["MAIN"], DOVE=dct["DOVE"])
+            if "NEST" not in dct:
+                return BaseURLs(FRONT=dct["FRONT"], MAIN=dct["MAIN"], DOVE=dct["DOVE"], NEST=NEST_URL)
+            return BaseURLs(FRONT=dct["FRONT"], MAIN=dct["MAIN"], DOVE=dct["DOVE"], NEST=dct["NEST"])
         if "name" not in dct:
             return dct
         if "manager" in dct:

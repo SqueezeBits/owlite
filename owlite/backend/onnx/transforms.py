@@ -11,6 +11,7 @@ from onnx_graphsurgeon.importers.onnx_importer import get_numpy_type
 
 from owlite_core.logger import log
 
+from ..config import ONNX_TRANSFORM_MAXIMUM_ITERATION
 from ..utils import is_floating_point, nodestr
 from .export_with_external_data import export_with_external_data
 from .fold_constants import fold_constants
@@ -19,8 +20,6 @@ from .onnx_op import ONNXOp
 OnnxTransform = Callable[[gs.Graph], gs.Graph]
 ONNX_TRANSFORMS: dict[str, OnnxTransform] = {}
 TensorType = Union[gs.Constant, gs.Variable]
-
-MAXIMUM_ITERATION = 100
 
 
 def apply_onnx_transforms(onnx_proto: ModelProto, output_path: Optional[str] = None, **kwargs: Any) -> ModelProto:
@@ -81,11 +80,14 @@ def fold_trilu_constants(graph: gs.Graph) -> gs.Graph:
             input_values: np.ndarray = input_node.attrs["value"].values
 
             k_node = input_node_of(node, 1)
-            if k_node is None or "value" not in k_node.attrs:
+            if k_node is None:
+                k_value = 0
+            elif "value" in k_node.attrs:
+                k_value = k_node.attrs["value"].values.item()
+            else:
                 continue
-            k_values: np.ndarray = k_node.attrs["value"].values
 
-            folded_values: np.ndarray = np.tril(input_values, k_values)
+            folded_values: np.ndarray = np.tril(input_values, k_value)
 
             output_tensor: gs.Variable = node.outputs[0]
             output_tensor.inputs.clear()
@@ -445,7 +447,7 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
     for node in graph.nodes:
         if node.op == "Conv":
             i = 0
-            while i < MAXIMUM_ITERATION:
+            while i < ONNX_TRANSFORM_MAXIMUM_ITERATION:
                 if _is_foldable(node.outputs[0]):
                     log.debug(f"Folding {nodestr(node.outputs[0].outputs[0])} into {nodestr(node)}")
                     _fold(node, node.outputs[0].outputs[0])
@@ -598,13 +600,13 @@ def remove_if_has_unique_non_optional_input_and_unique_used_output(node: gs.Node
     log.debug(f"Removed {nodestr(node, True)}")
 
 
-def input_node_of(node: gs.Node, tensor_idx=0, producer_idx=0) -> Optional[gs.Node]:
+def input_node_of(node: gs.Node, tensor_idx: int = 0, producer_idx: int = 0) -> Optional[gs.Node]:
     if len(node.inputs) > tensor_idx and len(node.inputs[tensor_idx].inputs) > producer_idx:
         return node.i(tensor_idx, producer_idx)
     return None
 
 
-def output_node_of(node: gs.Node, tensor_idx=0, consumer_idx=0) -> Optional[gs.Node]:
+def output_node_of(node: gs.Node, tensor_idx: int = 0, consumer_idx: int = 0) -> Optional[gs.Node]:
     if len(node.outputs) > tensor_idx and len(node.outputs[tensor_idx].outputs) > consumer_idx:
         return node.o(consumer_idx, tensor_idx)
     return None

@@ -113,7 +113,7 @@ class FakeQuantizer(torch.nn.Module):
         else:
             self.step_size: torch.nn.Parameter = torch.nn.Parameter(torch.ones(1))
             self.zero_point: torch.nn.Parameter = torch.nn.Parameter(
-                torch.zeros(1),
+                torch.zeros(1, dtype=torch.int32),
                 requires_grad=bool(not self.symmetric.item() and self.learn_zero_point.item()),
             )
         self._is_enabled = enable
