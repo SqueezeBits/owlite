@@ -1,5 +1,25 @@
 ​![](https://raw.githubusercontent.com/SqueezeBits/owlite/master/.github/images/owlite_logo.png)​​
 
+<div align="center">
+<p align="center">
+  <a href="https://www.squeezebits.com/">Website</a> •
+  <a href="https://owlite.ai/">Web UI</a> •
+  <a href="#key-features">Key Features</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#getting-started">Getting Started</a> •
+  <a href="#contact">Contact</a>
+</p>
+<p align="center">
+  <a href="https://github.com/SqueezeBits/owlite/releases"><img src="https://img.shields.io/github/v/release/SqueezeBits/owlite?color=EE781F" />
+  <a href="https://github.com/SqueezeBits/owlite-examples" ><img src="https://img.shields.io/badge/Examples-4BCB7A" />
+  <a href="https://squeezebits.gitbook.io/owlite/quick/readme"><img src="https://img.shields.io/badge/Documentation-FFA32C" />
+
+  <a href="https://github.com/SqueezeBits/owlite#installation"><img src="https://img.shields.io/badge/python->=3.10-blue" />
+  <a href="https://github.com/SqueezeBits/owlite/blob/master/requirements.txt"><img src="https://img.shields.io/badge/pytorch-2.0%20|%202.1-blue" />
+  <a href="https://github.com/SqueezeBits/owlite/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-APGL--3.0-lightgray" /></a>
+</p>    
+</div>
+
 ## OwLite
 
 * https://owlite.ai
@@ -31,7 +51,7 @@
 
 ## **Installation**
 
-To install this pacakage, please use Python 3.10 or higher.
+To install this package, please use Python 3.10 or higher.
 
 Using pip (Recommended)
 ```bash
@@ -48,6 +68,8 @@ pip install --extra-index-url https://pypi.ngc.nvidia.com -e .
 ## Getting Started
 
 Please check <a href="https://squeezebits.gitbook.io/owlite/">[OwLite Documentation]</a> for user guide and troubleshooting examples.
+
+Explore <a href="https://github.com/SqueezeBits/owlite-examples/">[OwLite Examples]</a>, a repository showcasing seamless PyTorch model compression into TensorRT engines. Easily integrate OwLite with minimal code changes and explore powerful compression results.
 
 ## Contact
 
