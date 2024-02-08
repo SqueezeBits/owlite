@@ -10,12 +10,12 @@
   <a href="#contact">Contact</a>
 </p>
 <p align="center">
-  <a href="https://github.com/SqueezeBits/owlite/releases"><img src="https://img.shields.io/github/v/release/SqueezeBits/owlite?color=EE781F" />
-  <a href="https://github.com/SqueezeBits/owlite-examples" ><img src="https://img.shields.io/badge/Examples-4BCB7A" />
-  <a href="https://squeezebits.gitbook.io/owlite/quick/readme"><img src="https://img.shields.io/badge/Documentation-FFA32C" />
+  <a href="https://github.com/SqueezeBits/owlite/releases"><img src="https://img.shields.io/github/v/release/SqueezeBits/owlite?color=EE781F" /></a>
+  <a href="https://github.com/SqueezeBits/owlite-examples" ><img src="https://img.shields.io/badge/Examples-4BCB7A" /></a>
+  <a href="https://squeezebits.gitbook.io/owlite/quick/readme"><img src="https://img.shields.io/badge/Documentation-FFA32C" /></a>
 
-  <a href="https://github.com/SqueezeBits/owlite#installation"><img src="https://img.shields.io/badge/python->=3.10-blue" />
-  <a href="https://github.com/SqueezeBits/owlite/blob/master/requirements.txt"><img src="https://img.shields.io/badge/pytorch-2.0%20|%202.1-blue" />
+  <a href="https://github.com/SqueezeBits/owlite#installation"><img src="https://img.shields.io/badge/python->=3.10-blue" /></a>
+  <a href="https://github.com/SqueezeBits/owlite/blob/master/requirements.txt"><img src="https://img.shields.io/badge/pytorch-2.0%20|%202.1-blue" /></a>
   <a href="https://github.com/SqueezeBits/owlite/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-APGL--3.0-lightgray" /></a>
 </p>    
 </div>
