@@ -1,2 +1,11 @@
-from .fake_quantizer import FakeQuantizer
-from .modules import QConv1d, QConv2d, QConv3d, QLinear
+from .modules import (
+    FakePerChannelQuantizer,
+    FakePerTensorQuantizer,
+    FakeQuantizer,
+    QConv1d,
+    QConv2d,
+    QConv3d,
+    QLinear,
+    disable_quantizers,
+    enable_quantizers,
+)

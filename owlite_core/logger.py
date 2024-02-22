@@ -1,7 +1,7 @@
 # pylint: disable=protected-access
 import logging
 import os
-from typing import Any, Callable, Optional, cast
+from typing import Any, Callable, Optional, TypeVar, cast
 
 from onnx_graphsurgeon.logger import G_LOGGER
 
@@ -103,6 +103,7 @@ class OwLiteFormatter(logging.Formatter):
         logging.WARNING: "\x1b[38;2;255;212;0m",  # Yellow color for WARNING
         logging.ERROR: "\x1b[38;2;255;40;40m",  # Red color for ERROR
         logging.DEBUG: "\x1b[38;2;123;131;191m",  # Some shade of blue color for DEBUG
+        DEBUG_WARNING: "\x1b[38;2;175;0;2151m",  # DarkViolet color for DEBUG WARNING
     }
 
     reset = "\x1b[0m"
@@ -110,7 +111,7 @@ class OwLiteFormatter(logging.Formatter):
 
 
 if "owlite" not in logging.getLogger().manager.loggerDict:
-    logging.addLevelName(DEBUG_WARNING, "DEBUG] [WARNING")
+    logging.addLevelName(DEBUG_WARNING, "DEBUG WARNING")
     logging.addLevelName(ULTRA_VERBOSE, "ULTRA_VERBOSE")
 
     log = Logger("owlite")
@@ -129,7 +130,10 @@ else:
     log = cast(Logger, logging.getLogger().manager.loggerDict["owlite"])
 
 
-def suppress_owlite_warnings(cls: Any) -> Any:
+T = TypeVar("T")
+
+
+def suppress_owlite_warnings(cls: T) -> T:
     """
     A decorator to suppress owlite warnings during the initialization of class.
 
@@ -139,12 +143,12 @@ def suppress_owlite_warnings(cls: Any) -> Any:
     Returns:
     - The decorated class.
     """
-    original_init: Callable[..., None] = cls.__init__
+    original_init: Callable[..., None] = cls.__init__  # type: ignore[misc]
 
     def new_init(self: Any, *args: Any, **kwargs: Any) -> None:
         assert isinstance(log, Logger)
         with log.ignore_warnings():
             original_init(self, *args, **kwargs)
 
-    cls.__init__ = new_init
+    cls.__init__ = new_init  # type: ignore[misc]
     return cls

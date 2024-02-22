@@ -1,5 +1,4 @@
-__version__ = "1.1.1"
-
+from owlite_core.constants import OWLITE_VERSION as __version__  # noqa: N811
 from owlite_core.logger import log
 
 from . import api, backend, calib, nn
@@ -10,9 +9,11 @@ from .calibrators import (
     prepare_for_calibration,
     update_fake_quantizers,
 )
+from .compress import compress
 from .enums import PTQCalibrationType, QATBackwardType
-from .nn.fake_quantizer import enable_quantizers
 from .options import (
+    Channel,
+    CompressionOptions,
     DynamicAxisOptions,
     DynamicInputOptions,
     FakeQuantizerOptions,
@@ -21,4 +22,3 @@ from .options import (
     ONNXExportOptions,
 )
 from .owlite import init
-from .quantize import quantize

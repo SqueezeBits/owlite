@@ -4,7 +4,7 @@ import torch
 
 from owlite_core.logger import log
 
-from ..fake_quantizer import FakeQuantizer
+from .fake_quantizer import FakeQuantizer
 
 
 class UnaryNeuralQModuleMixin:
@@ -20,7 +20,7 @@ class UnaryNeuralQModuleMixin:
     input_quantizer: Optional[FakeQuantizer]
     weight_quantizer: Optional[FakeQuantizer]
 
-    def _set_zero_bias(self) -> None:
+    def _set_bias_to_zero(self) -> None:
         """makes bias with zero tensor"""
         raise NotImplementedError()
 
@@ -41,7 +41,7 @@ class UnaryNeuralQModuleMixin:
                 stacklevel=2,
             )
             return False
-        if self.input_quantizer.precision.item() >= 16:
+        if self.input_quantizer.precision >= 16:
             log.debug_warning(
                 "Trying to folding zero point to bias "
                 f"though input precision is FP16 or FP32({self.input_quantizer})",
@@ -67,7 +67,7 @@ class UnaryNeuralQModuleMixin:
             raise RuntimeError("Trying to clipping range a module in tracing(torch.jit.trace)")
         if self.weight_quantizer is None:
             return
-        if not self.weight_quantizer.narrow:
+        if not self.weight_quantizer.narrow_range:
             log.debug("Trying to clipping range a module with the weight quantizer that is not a narrow range.")
             log.debug(self.weight_quantizer)
             return
@@ -95,7 +95,7 @@ class UnaryNeuralQModuleMixin:
 
         # initialize bias if it is not existed
         if self.bias is None:
-            self._set_zero_bias()
+            self._set_bias_to_zero()
         weight_dim = list(range(1, self.weight.dim()))  # assume channel dim is 0
         precomputed = self.weight.data.sum(dim=weight_dim) * self.input_quantizer.zero_point
         if self.bias is not None:
@@ -126,17 +126,16 @@ class UnaryNeuralQModuleMixin:
             self.bias.data = self.bias.data - precomputed
         self.input_quantizer.is_zero_point_folded = False
 
-    def enable(self, status: bool = True) -> None:
-        """Enables or disables the quantizer.
-
-        Args:
-            status (bool, optional). If `True`, quantizer work. Otherwise, quantizer do not work. Defaults `True`
-        """
+    def enable(self) -> None:
+        """Enables the quantizer."""
         if self.input_quantizer is not None:
-            self.input_quantizer.enable(status)
+            self.input_quantizer.enable()
         if self.weight_quantizer is not None:
-            self.weight_quantizer.enable(status)
+            self.weight_quantizer.enable()
 
     def disable(self) -> None:
         """Disables quantizers"""
-        self.enable(False)
+        if self.input_quantizer is not None:
+            self.input_quantizer.disable()
+        if self.weight_quantizer is not None:
+            self.weight_quantizer.disable()

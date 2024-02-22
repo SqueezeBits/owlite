@@ -20,10 +20,10 @@ def upload_file_to_url(file_path: str, dst_url: str) -> None:
 
         HTTPError: when request was not successful
     """
-    log.info(f"Uploading {file_path}")
+    log.info(f"Uploading {file_path}")  # UX
 
     if not os.path.exists(file_path):
-        log.error(f"Cannot upload {file_path} as it is not found")
+        log.error(f"Cannot upload {file_path} as it is not found")  # UX
         raise FileNotFoundError("File not found")
 
     total = os.path.getsize(file_path)
@@ -40,7 +40,7 @@ def upload_file_to_url(file_path: str, dst_url: str) -> None:
             if not resp.ok:
                 resp.raise_for_status()
 
-        log.info("Uploading done")
+        log.info("Uploading done")  # UX
 
 
 def download_file_from_url(file_url: str, path_to_save: str) -> None:
@@ -56,10 +56,10 @@ def download_file_from_url(file_url: str, path_to_save: str) -> None:
     Raises:
         HTTPError: when request was not successful
     """
-    log.info(f"Downloading file at {path_to_save}")
+    log.info(f"Downloading file at {path_to_save}")  # UX
 
     if os.path.exists(path_to_save):
-        log.warning(f"The existing file at {path_to_save} will be overwritten")
+        log.warning(f"The existing file at {path_to_save} will be overwritten")  # UX
 
     resp = requests.get(file_url, stream=True)  # pylint: disable=missing-timeout
     total = int(resp.headers.get("content-length", 0))
@@ -76,4 +76,4 @@ def download_file_from_url(file_url: str, path_to_save: str) -> None:
         if not resp.ok:
             resp.raise_for_status()
 
-    log.info("Downloading done")
+    log.info("Downloading done")  # UX

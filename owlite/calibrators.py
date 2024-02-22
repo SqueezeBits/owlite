@@ -7,7 +7,7 @@ from owlite_core.logger import log
 
 from .backend.fx.types import GraphModuleOrDataParallel
 from .enums import OwLiteStatus
-from .nn.fake_quantizer import FakeQuantizer
+from .nn import FakeQuantizer
 
 
 def prepare_for_calibration(model: GraphModuleOrDataParallel) -> None:
@@ -16,13 +16,13 @@ def prepare_for_calibration(model: GraphModuleOrDataParallel) -> None:
     Args:
         model(GraphModule): graph module to calibrate.
     """
-    log.info("Preparing for calibration")
+    log.info("Preparing for calibration")  # UX
     for _, module in model.named_modules(remove_duplicate=True):
         if isinstance(module, (FakeQuantizer,)):
             module.disable()
             module.calibrator.prepare()
-    log.info("All fake quantizers in the model are now ready for calibration")
-    log.info("Calibrating the model")
+    log.info("All fake quantizers in the model are now ready for calibration")  # UX
+    log.info("Calibrating the model")  # UX
 
 
 def update_fake_quantizers(model: GraphModuleOrDataParallel) -> None:
@@ -51,7 +51,7 @@ def update_fake_quantizers(model: GraphModuleOrDataParallel) -> None:
         model.module.meta["owlite_status"] = OwLiteStatus.CALIBRATED
     else:
         model.meta["owlite_status"] = OwLiteStatus.CALIBRATED
-    log.info("Updated fake quantizers. Calibration finished")
+    log.info("Updated fake quantizers. Calibration finished")  # UX
 
 
 class CalibrationContext:

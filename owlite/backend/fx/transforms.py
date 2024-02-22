@@ -1,6 +1,4 @@
-from collections.abc import Iterable
-from itertools import combinations
-from typing import Any, Callable, Optional, Union
+from typing import Callable, Optional, Union
 
 import torch
 from torch.fx.graph_module import GraphModule
@@ -9,10 +7,11 @@ from torch.nn.utils.fusion import fuse_conv_bn_eval, fuse_linear_bn_eval
 
 from owlite_core.logger import log
 
+from ...nn import FakePerTensorQuantizer, FakeQuantizer
 from ...nn import modules as qnn
-from ...nn.fake_quantizer import FakeQuantizer
 from ...nn.modules.qmodule_mixins import UnaryNeuralQModuleMixin
-from ..utils import get_most_common_device, nodestr
+from ...options import Channel
+from ..utils import get_most_common_device
 from .node import find_placeholders, get_target_module
 
 GraphModuleTransform = Callable[[GraphModule], GraphModule]
@@ -64,6 +63,8 @@ def fix_input_parameter_names(graph_module: GraphModule) -> GraphModule:
         GraphModule: graph module with inputs renamed
     """
     for node in find_placeholders(graph_module.graph):
+        if not isinstance(node.target, str):
+            continue
         if node.target.startswith("L_kwargs_") and node.target.endswith("_"):
             node.target = node.target[9:-1]
         elif node.target.startswith("L_") and node.target.endswith("_"):
@@ -130,100 +131,102 @@ def canonicalize_silu(graph_module: GraphModule) -> GraphModule:
     return graph_module
 
 
-def matches_module_pattern(pattern: Iterable[type], node: Node, modules: dict[str, Any]):
+def matches_module_pattern(pattern: tuple[type[torch.nn.Module], type[torch.nn.Module]], node: Node) -> bool:
     """Check current node matches with one of patterns.
 
     Returns:
-        True if there is a pattern matched. Else, False.
+        `True` if there is a pattern matched, `False` otherwise.
     """
-    if len(node.args) == 0:
+    if not node.all_input_nodes:
         return False
-    nodes = (node.args[0], node)
-    for expected_type, current_node in zip(pattern, nodes):
-        if not isinstance(current_node, Node):
-            return False
-        if current_node.op != "call_module":
-            return False
-        if not isinstance(current_node.target, str):
-            return False
-        if current_node.target not in modules:
-            return False
-        if not isinstance(modules[current_node.target], expected_type):
-            # if type(modules[current_node.target]) is not expected_type:
-            return False
-    return True
+    nodes = (node.all_input_nodes[0], node)
+    return all(
+        isinstance(get_target_module(current_node), expected_type)
+        for expected_type, current_node in zip(pattern, nodes)
+    )
 
 
-def replace_node_module(node: Node, module: dict[str, Any], new_module: torch.nn.Module):
+def replace_call_module_node_target(node: Node, new_module: torch.nn.Module) -> None:
     """Replacing module into new_module.
 
     Args:
         node: A Node. It is used for get name of module
-        module: A old module.
         new_module: A new module to replace with.
     """
-    if not isinstance(node.target, str):
-        raise RuntimeError(f"Unable to get module name from node {nodestr(node)}")
-    *parent, name = node.target.rsplit(".", 1)
-    parent_name = parent[0] if parent else ""
-    module[node.target] = new_module
-    setattr(module[parent_name], name, new_module)
+    graph_module = node.graph.owning_module
+    if graph_module is None or not (node.op == "call_module" and isinstance(node.target, str)):
+        return
+    # `add_submodule` method overwrites the existing module
+    graph_module.add_submodule(node.target, new_module)
 
 
 def _rescale_step_size_with_batchnorm(
     quantizer: FakeQuantizer,
     batchnorm: Union[torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d],
-):
-    if not isinstance(quantizer, FakeQuantizer):
-        raise TypeError(
-            "_rescale_step_size_with_batchnorm(): argument 'quantizer' (position 0) must be FakeQuantizer, "
-            f"but found element of type {type(quantizer)} at pos 0"
+) -> Optional[FakeQuantizer]:
+    """Rescales the step size of the fake quantizer with the BatchNormNd and returns it."""
+    if not (
+        isinstance(quantizer, FakeQuantizer)
+        and isinstance(batchnorm, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d))
+        and batchnorm.running_var is not None
+    ):
+        log.debug_warning(
+            f"Expected quantizer to be {FakeQuantizer} and batchnorm to be one of types "
+            f"{torch.nn.BatchNorm1d}, {torch.nn.BatchNorm2d}, {torch.nn.BatchNorm3d}, "
+            f"with `running_var` but got {batchnorm} (running_var={batchnorm.running_var})"
         )
-    if not isinstance(batchnorm, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d)):
-        raise TypeError(
-            "_rescale_step_size_with_batchnorm(): argument 'batchnorm' (position 0) must be BatchNormNd, "
-            f"but found element of type {type(batchnorm)} at pos 0"
-        )
+        return None
     scale = batchnorm.weight.data * torch.rsqrt(batchnorm.running_var.data + batchnorm.eps)
 
-    quantizer.step_size.data = quantizer.step_size.data * scale.abs()
-    if not quantizer.per_channel.item():
+    if isinstance(quantizer, FakePerTensorQuantizer):
         log.warning(
             "Trying to BatchNorm Fuse a module that weight quantization is per-tensor. "
             "Automatically changed it to per-channel quantization"
         )
-        quantizer.per_channel.data = torch.tensor(True)
-        quantizer.zero_point.data = quantizer.zero_point.data.broadcast_to(quantizer.step_size.shape)
+        quantizer.as_per_channel(Channel(axis=0, size=batchnorm.num_features))
+    quantizer.step_size.data = quantizer.step_size.data * scale.abs()
+    return quantizer
 
 
 def _fuse_by_patterns(
     model: GraphModule,
-    patterns: list[tuple[type[torch.nn.Module]], ...],
+    patterns: list[tuple[type[torch.nn.Module], type[torch.nn.Module]]],
     fusion_func: Callable[[torch.nn.Module, torch.nn.Module], torch.nn.Module],
-):
+) -> None:
     """Fuses module/BN layers for inference purposes."""
-    modules = dict(model.named_modules())
     new_graph = model.graph
     for pattern in patterns:
+        node: Node
         for node in new_graph.nodes:
-            if matches_module_pattern(pattern, node, modules):
-                if len(node.args[0].users) > 1:  # Output of module is used by other nodes
-                    continue
-                module = modules[node.args[0].target]
-                batchnorm = modules[node.target]
-                fused_module = fusion_func(module, batchnorm)
-                if isinstance(module, UnaryNeuralQModuleMixin):
-                    _rescale_step_size_with_batchnorm(fused_module.weight_quantizer, batchnorm)
-                replace_node_module(node.args[0], modules, fused_module)
-                node.replace_all_uses_with(node.args[0])
-                new_graph.erase_node(node)
-                model.delete_submodule(node.target)
+            if not isinstance(node.target, str):
+                continue
+            if not matches_module_pattern(pattern, node):
+                continue
+            parent = node.all_input_nodes[0]
+            if len(parent.users) > 1:  # Output of module is used by other nodes
+                continue
+            if not (
+                (module := get_target_module(parent)) is not None
+                and isinstance(
+                    (batchnorm := get_target_module(node)),
+                    (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d),
+                )
+            ):
+                continue
+            fused_module = fusion_func(module, batchnorm)
+            if isinstance(fused_module, UnaryNeuralQModuleMixin) and fused_module.weight_quantizer:
+                fused_module.weight_quantizer = _rescale_step_size_with_batchnorm(
+                    fused_module.weight_quantizer, batchnorm
+                )
+            replace_call_module_node_target(parent, fused_module)
+            node.replace_all_uses_with(parent)
+            new_graph.erase_node(node)
+            model.delete_submodule(node.target)
     new_graph.lint()
     model.recompile()
-    return model
 
 
-def fuse_linear_bn_with_quantized_bias(model: GraphModule):
+def fuse_linear_bn_with_quantized_bias(model: GraphModule) -> None:
     """Perform batchnorm fusing of owlite.nn.QLinear to quantize bias or hidden inputs.
 
     If a QLinear in the [owlite.nn.QLinear, torch.nn.BatchNorm1d] pattern quantizes a bias or hidden input,
@@ -237,25 +240,32 @@ def fuse_linear_bn_with_quantized_bias(model: GraphModule):
     # in linear-bn pattern if bias or hidden input is quantized then fuse the bn.
     fused_list = []
     for node in model.graph.nodes:
-        if not (node.op == "call_module" and isinstance(get_target_module(node), qnn.QLinear)):
+        if not isinstance((qlinear := get_target_module(node)), qnn.QLinear):
             continue
 
-        qlinear: qnn.QLinear = get_target_module(node)
         users = list(node.users)
         if (
             len(users) == 1
-            and users[0].op == "call_module"
-            and isinstance(get_target_module(users[0]), torch.nn.BatchNorm1d)
+            and isinstance(
+                (batchnorm_module := get_target_module(users[0])),
+                torch.nn.BatchNorm1d,
+            )
+            and qlinear.weight_quantizer is not None
             and (qlinear.hidden_input_quantizer is not None or qlinear.bias_quantizer is not None)
         ):
-            batchnorm_module: torch.nn.BatchNorm1d = get_target_module(users[0])
-            fused_module = fuse_linear_bn_eval(qlinear, batchnorm_module)
-            _rescale_step_size_with_batchnorm(qlinear.weight_quantizer, batchnorm_module)
-            replace_node_module(
-                node,
-                dict(node.graph.owning_module.named_modules()),
-                fused_module,
+            if (
+                not isinstance(fused_module := fuse_linear_bn_eval(qlinear, batchnorm_module), qnn.QLinear)
+                or fused_module.weight_quantizer is None
+            ):
+                log.debug_warning(
+                    "fuse_linear_bn_eval() returns invalid type."
+                    f" - got {type(fused_module)}, but expected: {qnn.QLinear}"
+                )
+                return
+            fused_module.weight_quantizer = _rescale_step_size_with_batchnorm(
+                fused_module.weight_quantizer, batchnorm_module
             )
+            replace_call_module_node_target(node, fused_module)
             users[0].replace_all_uses_with(node)
             node.graph.erase_node(users[0])
             node.graph.owning_module.delete_submodule(users[0].target)
@@ -270,13 +280,13 @@ def fuse_linear_bn_with_quantized_bias(model: GraphModule):
         log.warning(f"Fused node : {fused_list}")
 
 
-def fuse_bn(model: GraphModule):
+def fuse_bn(model: GraphModule) -> None:
     """Fuse Conv-BatchNorm patterns in model into Conv
 
     Args:
         model (GraphModule): a graph module, possibly wrapped by dp or ddp.
     """
-    conv_patterns = [
+    conv_patterns: list[tuple[type[torch.nn.Module], type[torch.nn.Module]]] = [
         (torch.nn.Conv1d, torch.nn.BatchNorm1d),
         (torch.nn.Conv2d, torch.nn.BatchNorm2d),
         (torch.nn.Conv3d, torch.nn.BatchNorm3d),
@@ -284,7 +294,7 @@ def fuse_bn(model: GraphModule):
         (qnn.QConv2d, torch.nn.BatchNorm2d),
         (qnn.QConv3d, torch.nn.BatchNorm3d),
     ]
-    linear_patterns = [
+    linear_patterns: list[tuple[type[torch.nn.Module], type[torch.nn.Module]]] = [
         (torch.nn.Linear, torch.nn.BatchNorm1d),
         (qnn.QLinear, torch.nn.BatchNorm1d),
     ]
@@ -295,7 +305,7 @@ def fuse_bn(model: GraphModule):
     model.train(training_status)
 
 
-def fold_zp_to_bias(qmodel: torch.nn.Module):
+def fold_zp_to_bias(qmodel: torch.nn.Module) -> None:
     """folding all zeropoints of asymmetric quantization to bias of following operations
 
     Args:
@@ -306,7 +316,7 @@ def fold_zp_to_bias(qmodel: torch.nn.Module):
             module.fold_input_quantizer_zero_point_to_bias()
 
 
-def unfold_zp_to_bias(qmodel):
+def unfold_zp_to_bias(qmodel: torch.nn.Module) -> None:
     """folding zeropoint of asymmetric quantization from bias of following operation
 
     Args:
@@ -317,64 +327,16 @@ def unfold_zp_to_bias(qmodel):
             module.unfold_input_quantizer_zero_point_to_bias()
 
 
-def fuse_redundant_quantizers(graph_module: GraphModule):
-    """Fuses all redundant quantizers
-
-    Args:
-        graph_module (GraphModule): a graph module
-    """
-    for node in graph_module.graph.nodes:
-        fuse_redundant_input_quantizers_of(node)
-
-
-def fuse_redundant_input_quantizers_of(node: Node):
-    """Merge quantizers with src_node as argument that have the same quant_scheme
-
-    Args:
-        node: the node to fuse redundant input quantizers
-    """
-    graph_module = node.graph.owning_module
-    if graph_module is None:
-        return
-    quantizer_nodes: list[Optional[Node]] = [
-        *filter(
-            lambda n: n.op == "call_module" and isinstance(get_target_module(n), FakeQuantizer),
-            node.users,
-        )
-    ]
-
-    for i, j in combinations(range(len(quantizer_nodes)), 2):
-        node_to_reuse = quantizer_nodes[i]
-        node_to_remove = quantizer_nodes[j]
-        if not (node_to_reuse is not None and node_to_remove is not None):
-            continue
-        quantizer_to_reuse = get_target_module(node_to_reuse)
-        quantizer_to_remove = get_target_module(node_to_remove)
-        if not (
-            isinstance(quantizer_to_reuse, FakeQuantizer)
-            and isinstance(quantizer_to_remove, FakeQuantizer)
-            and quantizer_to_reuse.options == quantizer_to_remove.options
-        ):
-            continue
-
-        for child_node in node_to_remove.users:
-            child_module = get_target_module(child_node)
-            if not (isinstance(child_module, UnaryNeuralQModuleMixin) and child_module.input_quantizer is not None):
-                continue
-            child_module.input_quantizer = quantizer_to_reuse
-        node_to_remove.replace_all_uses_with(node_to_reuse)
-        graph_module.graph.erase_node(node_to_remove)
-        graph_module.delete_submodule(node_to_remove.target)
-        quantizer_nodes[j] = None
-        graph_module.recompile()
-
-
-def clip_narrow_range_weights(graph_module: GraphModule):
+def clip_narrow_range_weights(graph_module: GraphModule) -> None:
     """Clips weights with a narrow range of quantized modules in the graph_module.
 
     Args:
         graph_module (GraphModule): a graph module
     """
     for _, module in graph_module.named_modules(remove_duplicate=True):
-        if isinstance(module, (UnaryNeuralQModuleMixin)) and module.weight_quantizer.narrow:
+        if (
+            isinstance(module, (UnaryNeuralQModuleMixin))
+            and (weight_quantizer := module.weight_quantizer) is not None
+            and weight_quantizer.narrow_range
+        ):
             module.clip_weight()

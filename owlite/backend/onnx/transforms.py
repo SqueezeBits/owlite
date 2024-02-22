@@ -19,7 +19,7 @@ from .onnx_op import ONNXOp
 
 OnnxTransform = Callable[[gs.Graph], gs.Graph]
 ONNX_TRANSFORMS: dict[str, OnnxTransform] = {}
-TensorType = Union[gs.Constant, gs.Variable]
+Tensor = Union[gs.Constant, gs.Variable]
 
 
 def apply_onnx_transforms(onnx_proto: ModelProto, output_path: Optional[str] = None, **kwargs: Any) -> ModelProto:
@@ -218,7 +218,7 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
 
     # pylint: disable=too-many-statements
 
-    def _get_constant_or_none(tensor: TensorType) -> Optional[gs.Constant]:
+    def _get_constant_or_none(tensor: Tensor) -> Optional[gs.Constant]:
         if isinstance(tensor, gs.Constant):
             return tensor
 
@@ -612,11 +612,11 @@ def output_node_of(node: gs.Node, tensor_idx: int = 0, consumer_idx: int = 0) ->
     return None
 
 
-def get_defining_op_type(tensor: TensorType) -> Optional[str]:
+def get_defining_op_type(tensor: Tensor) -> Optional[str]:
     """Get defining node's operation type, return None if tensor has two or more defining ops
 
     Args:
-        tensor (TensorType): tensor to examine
+        tensor (Tensor): tensor to examine
 
     Returns:
         Optional[str]: ONNX operation type in string or None if cannot specify single unique defining op

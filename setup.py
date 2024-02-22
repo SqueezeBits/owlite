@@ -1,27 +1,8 @@
-# pylint: disable=missing-function-docstring, missing-module-docstring
-import platform
+# pylint: disable=all
 
 from setuptools import find_packages, setup
 
-
-def is_windows() -> bool:
-    return platform.system() == "Windows"
-
-
-def is_linux() -> bool:
-    return platform.system() == "Linux"
-
-
-def is_macos() -> bool:
-    return platform.system() == "Darwin"
-
-
-def is_ppc64le() -> bool:
-    return platform.machine() == "ppc64le"
-
-
-def is_cygwin() -> bool:
-    return platform.system().startswith("CYGWIN_NT")
+from owlite_core.constants import OWLITE_GIT_REPO_URL, OWLITE_VERSION
 
 
 def requirements() -> list[str]:
@@ -35,21 +16,21 @@ def requirements() -> list[str]:
         "tabulate",
         "requests",
         "tqdm",
+        "pydantic",
     ]
 
 
 setup(
     name="owlite",
-    version="1.1.1",
+    version=OWLITE_VERSION,
     description="OwLite - No-Code AI compression Toolkit",
-    url="https://bitbucket.org/squeezebits/owlitetorch",
+    url=OWLITE_GIT_REPO_URL,
     author="SqueezeBits Inc.",
     author_email="owlite@squeezebits.com",
     install_requires=requirements(),
-    packages=find_packages(exclude=("test",)),
+    packages=find_packages(exclude=("test", "scripts")),
     python_requires="~=3.10.0",
     classifiers=[
-        "Development Status :: 1 - Planning",
         "Intended Audience :: Developers",
         "Intended Audience :: Education",
         "Intended Audience :: Science/Research",

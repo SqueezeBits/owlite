@@ -2,7 +2,7 @@ from typing import Any, Callable, Optional, Union
 
 import requests
 
-from . import Tokens
+from .cache.tokens import Tokens
 from .constants import OWLITE_API_DEFAULT_TIMEOUT
 from .logger import log
 from .owlite_settings import OWLITE_SETTINGS
@@ -75,20 +75,21 @@ class APIBase:
                     try:  # attempt refresh
                         tokens = OWLITE_SETTINGS.tokens
                         assert tokens is not None
-                        refresh_token = tokens.refresh_token
 
-                        refresh_res = requests.post(
+                        resp = requests.post(
                             f"{OWLITE_SETTINGS.base_url.MAIN}/login/refresh",
-                            json={"refresh_token": refresh_token},
+                            json={"refresh_token": tokens.refresh_token},
                             timeout=self.default_timeout,
+                            headers={"Authorization": "Bearer " + tokens.access_token},
                         )
-                        log.debug(f"Token refresh request : {refresh_res.status_code}")
-                        if not refresh_res.ok:
-                            refresh_res.raise_for_status()
+                        log.debug(f"Token refresh request : {resp.status_code}")
+                        if not resp.ok:
+                            resp.raise_for_status()
 
+                        refresh_res = resp.json()
                         assert isinstance(refresh_res, dict)
                         OWLITE_SETTINGS.tokens = Tokens(
-                            refresh_res["access_token"], refresh_res["refresh_token"]
+                            access_token=refresh_res["access_token"], refresh_token=refresh_res["refresh_token"]
                         )  # token refreshed
 
                         log.debug("Token refreshed, re-attempting original request")
@@ -96,7 +97,7 @@ class APIBase:
                         continue
 
                     except Exception as e:  # refresh failed, force to login again
-                        log.error("Login session expired. Please log in again using 'owlite login'")
+                        log.error("Login session expired. Please log in again using 'owlite login'")  # UX
                         OWLITE_SETTINGS.tokens = None
                         raise e
 

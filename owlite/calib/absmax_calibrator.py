@@ -8,7 +8,7 @@ from owlite_core.logger import log
 from .calibrator import Calibrator
 
 if TYPE_CHECKING:
-    from ..nn.fake_quantizer import FakeQuantizer
+    from ..nn import FakeQuantizer
 
 
 class AbsmaxCalibrator(Calibrator):
@@ -44,7 +44,7 @@ class AbsmaxCalibrator(Calibrator):
             if calibrator.absmax is None:
                 raise RuntimeError("During calibration, an absmax should be initialized, but None was provided")
 
-            if module.unsigned.item() and (inputs[0].min() < 0):
+            if module.unsigned and (inputs[0].min() < 0):
                 log.warning(
                     "The unsigned fake quantizer has a negative number as input. "
                     "It will automatically convert to a signed fake quantizer",
@@ -54,8 +54,10 @@ class AbsmaxCalibrator(Calibrator):
 
             _input = inputs[0].clone()
             with torch.no_grad():
-                if module.per_channel.item():
-                    # assume channel axis is 0
+                if module.channel is not None:
+                    axis = module.channel.axis
+                    (other_dims := list(range(_input.dim()))).remove(axis)
+                    _input = _input.permute(axis, *other_dims)  # make channel dim is 0
                     new_absmax = _input.reshape(_input.size()[0], -1).abs().max(dim=1).values.clone()
                 else:
                     new_absmax = _input.abs().max().clone()
@@ -71,6 +73,7 @@ class AbsmaxCalibrator(Calibrator):
 
     def update(self) -> None:
         assert self.absmax is not None
+        assert self.quantizer.step_size.data.shape == self.absmax.shape
         # update step_size using "abs max"
         if not self.check_calib_ready():
             raise RuntimeError("Not all conditions for calibration were not met.")

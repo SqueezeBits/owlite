@@ -1,22 +1,25 @@
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
 import torch
+from packaging.version import Version
 from torch.fx.graph_module import GraphModule
 from torch.nn.parallel import DataParallel, DistributedDataParallel
 
 from owlite_core.constants import OWLITE_REPORT_URL
+from owlite_core.github_utils import get_latest_version_from_github
 from owlite_core.logger import log
 from owlite_core.owlite_settings import OWLITE_SETTINGS
 
+from . import __version__
 from .api import Baseline, Experiment, Project
 from .backend.fx.trace import symbolic_trace
 from .backend.onnx.signature import DynamicSignature, update_dynamic_signature
+from .compress import compress
 from .options import DynamicAxisOptions, DynamicInputOptions, ONNXExportOptions
-from .quantize import quantize
 
 
 @dataclass
@@ -29,8 +32,8 @@ class OwLite:
     """
 
     target: Union[Baseline, Experiment]
-    module_args: Optional[tuple[Any, ...]] = None
-    module_kwargs: Optional[dict[str, Any]] = None
+    module_args: Optional[tuple[Any, ...]] = field(default=None)
+    module_kwargs: Optional[dict[str, Any]] = field(default=None)
 
     def convert(
         self,
@@ -60,15 +63,15 @@ class OwLite:
                 "ii) the inputs provided for the model are incompatible with your model's 'forward' method.\n"
                 "Check the full error message below and make changes accordingly. "
                 f"Should the problem persist, please report the issue at {OWLITE_REPORT_URL} for further assistance"
-            )
+            )  # UX
             raise e
 
         self.module_args = args
         self.module_kwargs = kwargs
 
         if isinstance(self.target, Experiment) and self.target.has_config:
-            model = quantize(model, self.target.config)
-            log.info("Applied compression configuration")
+            model = compress(model, self.target.config)
+            log.info("Applied compression configuration")  # UX
 
         return model
 
@@ -135,7 +138,7 @@ class OwLite:
             log.error(
                 f"{model_type} is not supported. Please use the attribute module "
                 f"by unwrapping the model from {model_type}. Try owl.export(model.module)"
-            )
+            )  # UX
             raise TypeError(f"{model_type} is not supported by export")
         if not isinstance(model, GraphModule):
             model_type = f"{type(model).__module__}.{type(model).__name__}"
@@ -144,7 +147,7 @@ class OwLite:
         if isinstance(dynamic_axis_options, dict):
             dynamic_axis_options = DynamicAxisOptions(dynamic_axis_options)
             keys_repr = ", ".join(f"'{key}'" for key in dynamic_axis_options.keys())
-            log.info(f"`dynamic_axis_options` provided for the following inputs: {keys_repr}")
+            log.info(f"`dynamic_axis_options` provided for the following inputs: {keys_repr}")  # UX
 
         if isinstance(self.target, Baseline):
             if dynamic_axis_options is not None:
@@ -153,7 +156,7 @@ class OwLite:
                     "To export baseline model with dynamic input, "
                     "please create an experiment without compression configuration "
                     "and export it with `dynamic_axis_options`"
-                )
+                )  # UX
             proto = self.target.export(
                 model, self.module_args, self.module_kwargs, onnx_export_options=onnx_export_options
             )
@@ -236,7 +239,7 @@ class OwLite:
                 log.error(
                     "The `dynamic_input_options` for the experiment has `dynamic_input_options`. "
                     "Try `owl.benchmark(dynamic_input_options={...})`"
-                )
+                )  # UX
                 raise RuntimeError("Dynamic options failed")
             if isinstance(dynamic_input_options, dict):
                 dynamic_input_options = DynamicInputOptions(dynamic_input_options)
@@ -262,12 +265,12 @@ class OwLite:
             TypeError: When data is not JSON serializable or not allowed logging.
         """
         if not all(isinstance(value, (int, str, float)) for value in kwargs.values()):
-            log.error("Invalied value given to `owl.log`. The value for logging must be `int`, `str`, `float`")
+            log.error("Invalied value given to `owl.log`. The value for logging must be `int`, `str`, `float`")  # UX
             raise TypeError("Invalid value")
         try:
             self.target.log(json.dumps(kwargs))
         except TypeError as e:
-            log.error("Invalid value given to `owl.log`. The metrics for logging must be JSON-serializable")
+            log.error("Invalid value given to `owl.log`. The metrics for logging must be JSON-serializable")  # UX
             raise e
 
 
@@ -289,15 +292,33 @@ def init(
         description (Optional[str], optional): OwLite project description. Defaults to None.
 
     Raises:
-        RuntimeError: When not authenticated.
+        RuntimeError: When deprecated or not authenticated.
         ValueError: When invalid experiment name or baseline name is given.
 
     Returns:
         OwLite: Created `OwLite` instance.
     """
+    owlite_latest_version = Version(get_latest_version_from_github())
+
+    current_version = Version(__version__)
+    if current_version.major < owlite_latest_version.major:
+        log.error(
+            f"Your current version ({current_version}) is not supported. "
+            "Please update the package to the latest version with the following command: "
+            "pip install git+https://github.com/SqueezeBits/owlite --upgrade "
+            "--extra-index-url https://pypi.ngc.nvidia.com"
+        )  # UX
+        raise RuntimeError("Version is not supported")
+    if current_version < owlite_latest_version:
+        log.warning(
+            "A new version of OwLite is available. "
+            "To ensure the best usage, please update the package to the latest version with the following command: "
+            "pip install git+https://github.com/SqueezeBits/owlite --upgrade "
+            "--extra-index-url https://pypi.ngc.nvidia.com"
+        )  # UX
 
     if OWLITE_SETTINGS.tokens is None:
-        log.error("Please log in using 'owlite login'. Account not found on this device")
+        log.error("Please log in using 'owlite login'. Account not found on this device")  # UX
         raise RuntimeError("OwLite token not found")
 
     if OWLITE_SETTINGS.connected_device is None:
@@ -305,23 +326,23 @@ def init(
             "Connected device not found. "
             "You will be automatically connected to the default NEST device as you are subscribed to the free plan. "
             "Please connect to a specific device using 'owlite device connect --name (name)' if needed"
-        )
+        )  # UX
 
     else:
-        log.info(f"Connected device: {OWLITE_SETTINGS.connected_device.name}")
+        log.info(f"Connected device: {OWLITE_SETTINGS.connected_device.name}")  # UX
 
     validate_names(project=project, baseline=baseline, experiment=experiment, duplicate_from=duplicate_from)
     if description and len(description) > 140:
         log.error(
             "The project description should consist of at most 140 characters. "
             "Note that the description is not required for loading an existing project"
-        )
+        )  # UX
         raise ValueError("Description length exceeds limit")
 
     if experiment == baseline:
         log.error(
             f"Experiment name '{baseline}' is reserved for the baseline. Please try with a different experiment name"
-        )
+        )  # UX
         raise ValueError("Invalid experiment name")
 
     proj: Project = Project.load_or_create(project, description=description)
@@ -331,7 +352,7 @@ def init(
         if duplicate_from:
             log.warning(
                 f"`duplicate_from='{duplicate_from}'` will be ignored as no value for `experiment` was provided"
-            )
+            )  # UX
         target = Baseline.create(proj, baseline)
     else:
         existing_baseline = Baseline.load(proj, baseline)
@@ -339,7 +360,7 @@ def init(
             log.error(
                 f"No such baseline: {baseline}. "
                 f"Please check if the baseline name for the experiment '{experiment}' is correct"
-            )
+            )  # UX
             raise ValueError("Invalid baseline name")
         if duplicate_from is None:
             target = Experiment.load_or_create(existing_baseline, experiment)
@@ -349,15 +370,17 @@ def init(
                 log.error(
                     f"The experiment '{duplicate_from}' to duplicate from is not found. "
                     "Please check if the project name provided for `duplicate_from` argument is correct"
-                )
+                )  # UX
                 raise ValueError("Invalid experiment name")
             target = existing_experiment.clone(experiment)
 
     if os.path.exists(target.home):
-        log.warning(f"Existing local directory found at {target.home}. Continuing this code will overwrite the data")
+        log.warning(
+            f"Existing local directory found at {target.home}. Continuing this code will overwrite the data"
+        )  # UX
     else:
         os.makedirs(target.home, exist_ok=True)
-        log.info(f"Experiment data will be saved in {target.home}")
+        log.info(f"Experiment data will be saved in {target.home}")  # UX
 
     return OwLite(target)
 
@@ -383,5 +406,5 @@ def validate_names(**kwargs: Any) -> None:
         log.error(
             f"The following names do not meet the requirement: {invalid_items}. "
             "A valid name must consist of alphanumeric characters or special characters chosen from ()-_@:*&"
-        )
+        )  # UX
         raise ValueError("Invalid name")

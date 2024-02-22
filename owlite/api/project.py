@@ -1,6 +1,6 @@
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
 from requests.exceptions import HTTPError
@@ -20,7 +20,7 @@ class Project:
 
     id: str
     name: str
-    baseline: Optional["Baseline"] = None
+    baseline: Optional["Baseline"] = field(default=None)
 
     @property
     def url(self) -> str:
@@ -60,7 +60,7 @@ class Project:
             raise RuntimeError(f"Failed to create project '{name}'")
 
         project = cls(resp["id"], resp["name"])
-        log.info(f"Created a new {project}")
+        log.info(f"Created a new {project}")  # UX
         return project
 
     @classmethod
@@ -84,7 +84,7 @@ class Project:
             if e.response is not None and e.response.status_code == 409:  # the project already exists
                 data = json.loads(e.response.content)
                 project = cls(data["detail"], name)
-                log.info(f"Loaded the existing {project}")
+                log.info(f"Loaded the existing {project}")  # UX
                 return project
             raise e
 

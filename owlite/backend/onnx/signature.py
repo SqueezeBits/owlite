@@ -4,6 +4,7 @@ from typing import Any, Callable, Optional, Union
 import onnx_graphsurgeon as gs
 import torch
 from onnx import ModelProto
+from torch.fx.graph_module import GraphModule
 
 from ...options import DynamicAxisOptions, DynamicInputOptions
 
@@ -80,13 +81,19 @@ class Signature(list[tuple[str, tuple[int, ...]]]):
             Union["Signature", DynamicSignature]: A `Signature` object if `options` is `None`,
                 `DynamicSignature` object otherwise.
         """
-        signature_map = map_signature(module.forward, *args, **kwargs)
+        if isinstance(module, GraphModule) and isinstance(original_params := module.meta.get("original_params"), dict):
+            modified_params = inspect.signature(module.forward).parameters
+            signature_map = {
+                k: v for k, v in map_signature(original_params, *args, **kwargs).items() if k in modified_params
+            }
+        else:
+            signature_map = map_signature(module.forward, *args, **kwargs)
         signature = cls(
             (
                 name,
                 tuple(value.shape) if isinstance(value, torch.Tensor) else (),
             )
-            for name, value in signature_map
+            for name, value in signature_map.items()
         )
         if options is not None:
             return dynamize_signature(signature, options)
@@ -138,7 +145,10 @@ def update_dynamic_signature(input_signature: DynamicSignature, options: Dynamic
     return new_input_signature
 
 
-def map_signature(func: Callable, *args: Any, **kwargs: Any) -> list[tuple[str, Any]]:
+# pylint: disable=protected-access
+def map_signature(
+    func_or_its_params: Union[Callable, dict[str, inspect.Parameter]], *args: Any, **kwargs: Any
+) -> dict[str, Any]:
     """Maps the parameter names of a function to the corresponding values passed in args and kwargs.
 
     This function returns a list of tuples, where each tuple contains a parameter name and its corresponding value.
@@ -147,29 +157,54 @@ def map_signature(func: Callable, *args: Any, **kwargs: Any) -> list[tuple[str, 
     (if it exists) is used.
 
     Args:
-        func (Callable): Function to inspect.
+        func_or_its_params (Union[Callable, dict[str, inspect.Parameter]]): Function to inspect or its parameters
         args (Any): Positional arguments.
         kwargs (Any): Keyword arguments.
 
     Returns:
-        list[tuple[str, Any]]: List of tuples mapping parameter names to their values.
+        dict[str, Any]: List of tuples mapping parameter names to their values.
 
     Note:
         This function assumes that `args` and `kwargs` match the exact function signature,
         in order and length. If they don't, the result may not be as expected or exceptions might occur.
     """
-    sig = inspect.signature(func)
-    params = sig.parameters
+    params = (
+        dict(inspect.signature(func_or_its_params).parameters.items())
+        if callable(func_or_its_params)
+        else func_or_its_params
+    )
 
-    mapped = []
+    var_pos: Optional[tuple[int, str]] = None
+    var_key: Optional[tuple[int, str]] = None
+    # mapped: dict[str, Any] = {name: inspect._empty for name in params}
+    mapped: dict[str, Any] = {}
+    for i, (name, param) in enumerate(params.items()):
+        if param.kind == inspect._ParameterKind.VAR_POSITIONAL:
+            var_pos = (i, name)
+            mapped[name] = ()
+        if param.kind == inspect._ParameterKind.VAR_KEYWORD:
+            var_key = (i, name)
+            mapped[name] = {}
 
-    args_iter = iter(args)
-    for name, param in params.items():
-        if name in kwargs:
-            mapped.append((name, kwargs[name]))
-        elif args:
-            mapped.append((name, next(args_iter, param.default)))
-        else:
-            mapped.append((name, param.default))
+    for name, val in kwargs.items():
+        if name in params:
+            mapped[name] = val
+            params.pop(name)
+            continue
+        if var_key is not None:
+            var_key_name = var_key[1]
+            mapped[var_key_name][name] = val
+            params.pop(var_key_name)
+            continue
+
+    names = list(params)
+    for i, val in enumerate(args):
+        if i < len(names):
+            name = names[i]
+            mapped[name] = val
+            continue
+        if var_pos is not None and i >= var_pos[0]:
+            var_pos_name = var_pos[1]
+            mapped[var_pos_name] += (val,)
 
     return mapped

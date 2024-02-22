@@ -11,15 +11,14 @@ class DynamicAxisOption(OptionsMixin):
     axis: int
 
 
-class DynamicAxisOptions(OptionsDict):
+class DynamicAxisOptions(OptionsDict[str, DynamicAxisOption]):
     """
     Key (str): the name of an input tensor
-    Value (int): the dynamic axis for the input tensor
+    Value (DynamicAxisOptions): the dynamic axis option for the input tensor
     """
 
-    ValueType = DynamicAxisOption
 
-
+# pylint: disable=redefined-builtin
 @dataclass
 class DynamicSizeOptions(OptionsMixin):
     """Dynamic axis setting for TensorRT benchmark"""
@@ -50,10 +49,8 @@ class DynamicSizeOptions(OptionsMixin):
         return self.min <= test <= self.max
 
 
-class DynamicInputOptions(OptionsDict):
+class DynamicInputOptions(OptionsDict[str, DynamicSizeOptions]):
     """
     Key (str): the name of an input tensor
     Value (DynamicSizeOptions): the dynamic size options for the input tensor when TensorRT executes
     """
-
-    ValueType = DynamicSizeOptions

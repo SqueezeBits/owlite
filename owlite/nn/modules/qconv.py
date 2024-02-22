@@ -5,11 +5,12 @@ from torch import Tensor
 from torch.nn import Parameter
 from torch.nn.modules.conv import Conv1d, Conv2d, Conv3d, _ConvNd
 
-from ...options import FakeQuantizerOptions
-from ..fake_quantizer import FakeQuantizer
+from ...options import Channel, FakeQuantizerOptions
+from .fake_quantizer import FakeQuantizer
 from .qmodule_mixins import UnaryNeuralQModuleMixin
 
 
+# mypy: disable-error-code=misc
 class _QConvNd(_ConvNd, UnaryNeuralQModuleMixin):
     def __init__(
         self,
@@ -22,7 +23,7 @@ class _QConvNd(_ConvNd, UnaryNeuralQModuleMixin):
             out_channels=conv.out_channels,
             kernel_size=conv.kernel_size,
             stride=conv.stride,
-            padding=conv.padding,
+            padding=conv.padding,  # type: ignore[arg-type]
             dilation=conv.dilation,
             groups=conv.groups,
             bias=conv.bias is not None,
@@ -31,10 +32,9 @@ class _QConvNd(_ConvNd, UnaryNeuralQModuleMixin):
             dtype=conv.weight.dtype,
         )  # type: ignore
         self.train(conv.training)
-        if weight_options is None:
-            weight_options = FakeQuantizerOptions.clq_per_channel()
         self.input_quantizer: Optional[FakeQuantizer] = None
-        self.weight_quantizer = FakeQuantizer.create(weight_options, channel_size=self.out_channels, narrow_range=True)
+        channel = Channel(0, self.out_channels) if (weight_options is not None and weight_options.per_channel) else None
+        self.weight_quantizer = FakeQuantizer.create(weight_options, channel, narrow_range=True)
         if self.weight_quantizer is not None:
             self.weight_quantizer.to(self.weight.device)
         with torch.no_grad():
@@ -42,7 +42,7 @@ class _QConvNd(_ConvNd, UnaryNeuralQModuleMixin):
             if self.bias is not None and conv.bias is not None:
                 self.bias.copy_(conv.bias)
 
-    def _set_zero_bias(self):
+    def _set_bias_to_zero(self) -> None:
         self.bias = Parameter(torch.zeros(self.out_channels).to(self.weight.device))
 
     def forward(self, inputs: Tensor) -> Tensor:
@@ -59,8 +59,8 @@ class QConv1d(_QConvNd, Conv1d):
 
         Args:
             conv (torch.nn.Conv1d): The original `Conv1d` module to replace with `QConv1d`
-            weight_options (Optional[FakeQuantizerOptions], optional): Option for the fake weight quantizer. If `None`,
-                applies 8-bit clq per-channel quantization. Defaults to None.
+            weight_options (Optional[FakeQuantizerOptions], optional): Option for the fake weight quantizer.
+                Defaults to None.
         """
         super().__init__(conv, weight_options)
 
@@ -73,8 +73,8 @@ class QConv2d(_QConvNd, Conv2d):
 
         Args:
             conv (torch.nn.Conv2d): The original `Conv2d` module to replace with `QConv2d`
-            weight_options (Optional[FakeQuantizerOptions], optional): Option for the fake weight quantizer. If `None`,
-                applies 8-bit clq per-channel quantization. Defaults to None.
+            weight_options (Optional[FakeQuantizerOptions], optional): Option for the fake weight quantizer.
+                Defaults to None.
         """
         super().__init__(conv, weight_options)
 
@@ -87,7 +87,7 @@ class QConv3d(_QConvNd, Conv3d):
 
         Args:
             conv (torch.nn.Conv3d): The original `Conv3d` module to replace with `QConv3d`
-            weight_options (Optional[FakeQuantizerOptions], optional): Option for the fake weight quantizer. If `None`,
-                applies 8-bit clq per-channel quantization. Defaults to None.
+            weight_options (Optional[FakeQuantizerOptions], optional): Option for the fake weight quantizer.
+                Defaults to None.
         """
         super().__init__(conv, weight_options)

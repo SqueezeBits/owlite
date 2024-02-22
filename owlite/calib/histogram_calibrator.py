@@ -9,7 +9,7 @@ from owlite_core.logger import log
 from .calibrator import Calibrator
 
 if TYPE_CHECKING:
-    from ..nn.fake_quantizer import FakeQuantizer
+    from ..nn import FakeQuantizer
 
 
 class HistogramCalibrator(Calibrator, ABC):
@@ -46,7 +46,7 @@ class HistogramCalibrator(Calibrator, ABC):
 
             _input = inputs[0].clone()
 
-            if module.symmetric.item() and module.unsigned.item() and inputs[0].min() < 0:
+            if module.symmetric and module.unsigned and inputs[0].min() < 0:
                 log.warning(
                     "The unsigned fake quantizer has a negative number as input. "
                     "It will automatically convert to a signed",
@@ -56,11 +56,9 @@ class HistogramCalibrator(Calibrator, ABC):
 
             with torch.no_grad():
                 new_input = []
-                if module.per_channel:
-                    _channel_axis = 0
-                    _channel_size = _input.shape[_channel_axis]
-                    for chn in range(_channel_size):
-                        _input_chn = torch.select(_input, _channel_axis, chn)
+                if module.per_channel and (channel := module.channel) is not None:
+                    for chn in range(channel.size):
+                        _input_chn = torch.select(_input, channel.axis, chn)
                         new_input.append(_input_chn)
                 else:
                     new_input.append(_input)
@@ -111,8 +109,10 @@ class HistogramCalibrator(Calibrator, ABC):
 
         # set histogram, bin_edges attr and register forward hook
         _histogram_size = 2048
-        _channel_size = self.quantizer.channel_size
-        assert _channel_size is not None
+        if (channel := self.quantizer.channel) is not None:
+            channel_size = channel.size
+        else:
+            channel_size = 1
         device = self.quantizer.step_size.device
 
         if any(len(hist_attr) != 0 for hist_attr in (self.histogram, self.bin_edges, self.histc_bins)):
@@ -122,9 +122,9 @@ class HistogramCalibrator(Calibrator, ABC):
             )
             raise ValueError("The histogram attributions are already set before the calibration is prepared")
 
-        self.histogram = [torch.zeros(_histogram_size).to(device) for _ in range(_channel_size)]
-        self.bin_edges = [torch.zeros(_histogram_size + 1).to(device) for _ in range(_channel_size)]
-        self.histc_bins = [torch.Tensor([_histogram_size]).to(device) for _ in range(_channel_size)]
+        self.histogram = [torch.zeros(_histogram_size).to(device) for _ in range(channel_size)]
+        self.bin_edges = [torch.zeros(_histogram_size + 1).to(device) for _ in range(channel_size)]
+        self.histc_bins = [torch.Tensor([_histogram_size]).to(device) for _ in range(channel_size)]
 
         self.hook_handler = self.quantizer.register_forward_hook(histogram_forward_hook_func)
         return self.hook_handler
@@ -136,10 +136,9 @@ class HistogramCalibrator(Calibrator, ABC):
             log.error(f"`histogram`: {self.histogram}\n `bin_edge`: {self.bin_edges}\n `histc_bins`: {self.histc_bins}")
             raise ValueError("During calibration, calibration attributions are not initialized")
 
-    def clear_attribution(self) -> None:
-        """clear attributions of histogram(`histogram`, `bin_edges`, `histc_bins`) and registered forward_hook"""
+    def clear(self) -> None:
+        """Clears attributes of histogram(`histogram`, `bin_edges`, `histc_bins`) and registered forward_hook"""
         assert isinstance(self.hook_handler, RemovableHandle)
-        # clear attributions about histogram from calibrator
         self.histogram.clear()
         self.bin_edges.clear()
         self.histc_bins.clear()

@@ -2,6 +2,7 @@ from typing import Optional, Union
 
 import torch
 
+from .fake_quantizer import FakePerChannelQuantizer, FakePerTensorQuantizer, FakeQuantizer
 from .qconv import QConv1d, QConv2d, QConv3d
 from .qlinear import QLinear
 from .qmodule_mixins import UnaryNeuralQModuleMixin
@@ -25,3 +26,25 @@ def promote_to_qmodule(cls: type[torch.nn.Module]) -> Optional[type[QModule]]:
         torch.nn.Linear: QLinear,
     }
     return quantized_class_map.get(cls, None)
+
+
+def enable_quantizers(net: torch.nn.Module) -> None:
+    """Enables or disables fake quantizers within the specified module.
+
+    Args:
+        net (torch.nn.Module): The module containing fake quantizers to enable or disable.
+    """
+    for _, module in net.named_modules():
+        if isinstance(module, FakeQuantizer):
+            module.enable()
+
+
+def disable_quantizers(net: torch.nn.Module) -> None:
+    """Enables or disables fake quantizers within the specified module.
+
+    Args:
+        net (torch.nn.Module): The module containing fake quantizers to enable or disable.
+    """
+    for _, module in net.named_modules():
+        if isinstance(module, FakeQuantizer):
+            module.disable()

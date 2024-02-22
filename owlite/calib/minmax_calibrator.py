@@ -8,7 +8,7 @@ from owlite_core.logger import log
 from .calibrator import Calibrator
 
 if TYPE_CHECKING:
-    from ..nn.fake_quantizer import FakeQuantizer
+    from ..nn import FakeQuantizer
 
 
 class MinmaxCalibrator(Calibrator):
@@ -28,7 +28,7 @@ class MinmaxCalibrator(Calibrator):
         self.min_value: Optional[torch.Tensor] = None
 
     def check_calib_ready(self) -> bool:
-        if self.quantizer.symmetric.item():
+        if self.quantizer.symmetric:
             log.error("MinMax Calibration only surpports aymmetric quantization")
             return False
         return super().check_calib_ready()
@@ -49,8 +49,10 @@ class MinmaxCalibrator(Calibrator):
 
             _input = inputs[0].clone()
             with torch.no_grad():
-                if module.per_channel.item():
-                    # assume channel axis is 0
+                if module.channel is not None:
+                    axis = module.channel.axis
+                    (other_dims := list(range(_input.dim()))).remove(axis)
+                    _input = _input.permute(axis, *other_dims)  # make channel dim is 0
                     new_max = _input.reshape(_input.size()[0], -1).max(dim=1).values.clone()
                     new_min = _input.reshape(_input.size()[0], -1).min(dim=1).values.clone()
                 else:

@@ -6,7 +6,7 @@ from torch.utils.hooks import RemovableHandle
 from .histogram_calibrator import HistogramCalibrator
 
 if TYPE_CHECKING:
-    from ..nn.fake_quantizer import FakeQuantizer
+    from ..nn import FakeQuantizer
 
 
 class PercentileCalibrator(HistogramCalibrator):
@@ -53,4 +53,4 @@ class PercentileCalibrator(HistogramCalibrator):
         # allocate deterministic algorithms to original state
         torch.use_deterministic_algorithms(_deterministic_enable_status, warn_only=True)
 
-        self.clear_attribution()
+        self.clear()

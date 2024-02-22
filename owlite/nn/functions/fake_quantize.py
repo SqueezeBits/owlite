@@ -1,4 +1,4 @@
-from typing import Callable, Union
+from typing import Callable, Optional
 
 import torch
 from torch import Tensor
@@ -10,8 +10,7 @@ def fake_quantize(
     zero_point: Tensor,
     quant_min: int,
     quant_max: int,
-    per_channel: Union[torch.BoolTensor, bool],
-    axis: int = 0,
+    axis: Optional[int] = None,
 ) -> torch.Tensor:
     """Same as `torch.fake_quantize_per_channel_affine` if `per_channel` is `True`, otherwise
     `torch.fake_quantize_per_tensor_affine`
@@ -22,20 +21,19 @@ def fake_quantize(
         zero_point (torch.Tensor): A float tensor, quantization zero_point.
         quant_min (int): The lower bound of the quantized domain.
         quant_max (int): The upper bound of the quantized domain.
-        per_channel (bool): If True, input will be per-channel quantized, otherwise per-tensor quantized.
         axis (int, optional): Channel axis. Only used when `per_channel` is `True`. Defaults to 0.
 
     Returns:
         torch.Tensor: fake-quantized tensor
     """
-    if per_channel:
+    if axis is not None:
         return torch.fake_quantize_per_channel_affine(
             inputs,
             step_size,
             zero_point,
             axis,
-            quant_min=quant_min,
-            quant_max=quant_max,
+            quant_min,
+            quant_max,
         )
 
     return torch.fake_quantize_per_tensor_affine(
@@ -50,15 +48,15 @@ def fake_quantize(
     )
 
 
-FakeQuantFunc = Callable[
+FakeQuantizeSignature = Callable[
     [
         Tensor,  # inputs
         Tensor,  # step_size
         Tensor,  # zp
-        Union[Tensor, float],  # grad_scale
+        float,  # grad_scale
         int,  # quant_min
         int,  # quant_max
-        Union[torch.BoolTensor, bool],  # per_channel
+        Optional[int],  # axis
         bool,  # compensate_zp
     ],
     Tensor,

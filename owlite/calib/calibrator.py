@@ -6,7 +6,7 @@ from torch.utils.hooks import RemovableHandle
 from owlite_core.logger import log
 
 if TYPE_CHECKING:
-    from ..nn.fake_quantizer import FakeQuantizer
+    from ..nn import FakeQuantizer
 
 
 class Calibrator(ABC):

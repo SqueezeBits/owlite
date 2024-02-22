@@ -1,13 +1,15 @@
-from typing import Any, Union
+# pylint: disable=duplicate-code, unused-argument
+from typing import Any, Optional
 
 import torch
-from torch import BoolTensor, Tensor
+from torch import Tensor
 from torch.autograd import Function
 
 from .fake_quantize import fake_quantize
 
 
-# pylint: disable= abstract-method, arguments-differ
+# mypy: disable-error-code=override
+# pylint: disable-next=abstract-method
 class STEFunction(Function):
     """fake quantizing function for QAT using STE (Straight-Through Estimator)
 
@@ -15,27 +17,24 @@ class STEFunction(Function):
     otherwise the gradient is zero
     """
 
-    # pylint: disable=unused-argument, duplicate-code
-    @staticmethod
+    @staticmethod  # pylint: disable-next=arguments-differ
     def forward(
         ctx: Any,
         inputs: Tensor,
         step_size: Tensor,
         zero_point: Tensor,
-        grad_scale: Tensor,
+        grad_scale: float,  # grad_scale is not used
         quant_min: int,
         quant_max: int,
-        per_channel: Union[bool, BoolTensor],
-        compensate_zp: bool,  # compensate_zp is unused argument in symmetric quantization
-    ) -> Any:
+        axis: Optional[int],
+        compensate_zp: bool,  # compensate_zp is not used
+    ) -> Tensor:
         """grad_scale and compensate_zp are unused arguments in symmetric quantization"""
         ctx.save_for_backward(inputs)
         lower_bound = quant_min * step_size
         upper_bound = quant_max * step_size
         ctx.other = lower_bound, upper_bound
-        return fake_quantize(inputs, step_size, zero_point, quant_min, quant_max, per_channel)
-
-    # pylint: enable= unused-argument
+        return fake_quantize(inputs, step_size, zero_point, quant_min, quant_max, axis)
 
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:
@@ -47,7 +46,5 @@ class STEFunction(Function):
         grad_inputs = torch.where(inputs.ge(lower_bound) * inputs.le(upper_bound), grad_output, 0)
         return grad_inputs, None, None, None, None, None, None, None
 
-
-# pylint: enable= abstract-method, arguments-differ
 
 ste_function = STEFunction.apply

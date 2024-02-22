@@ -9,14 +9,14 @@ from yacs.config import CfgNode
 from owlite_core.logger import log
 
 from .generic_type_checking import generic_isinstance, is_optional, unwrap_optional
-from .load import load_json_or_yaml
+from .load import check_version, load_json_or_yaml
 
 
 class OptionsMixin:
     """The Mixin-style base class for adding type-checking feature and custom value-checking feature."""
 
     @classmethod
-    def annotations(cls: type) -> dict[str, type]:
+    def annotations(cls) -> dict[str, type]:
         """Finds the type inferred from the type hint of each member variable from a given class
 
         Args:
@@ -26,7 +26,8 @@ class OptionsMixin:
             dict[str, type]: the type annotations
         """
         a = {}
-        if issubclass(cls.__base__, OptionsMixin):
+        if cls.__base__ is not None and issubclass(cls.__base__, OptionsMixin):
+            # pylint: disable-next=no-member
             a.update(cls.__base__.annotations())
         a.update(get_type_hints(cls))
         return a
@@ -51,6 +52,8 @@ class OptionsMixin:
             d = load_json_or_yaml(d)
         if not isinstance(d, dict):
             raise ValueError(f"{cls} cannot load invalid value {d}")
+
+        check_version(cls, d)
 
         kwargs = {}
         if not is_dataclass(cls) or not issubclass(cls, OptionsMixin):
@@ -125,6 +128,8 @@ class OptionsMixin:
         """Builtin dictionary representation for this object, which you can use it for writing it to a json file
         with the `json.dump` or `json.dumps` function"""
         d = {}
+        if version := getattr(self, "__version__", None):
+            d["version"] = version
         for field in fields(type(self)):  # type: ignore[arg-type]
             field_value = getattr(self, field.name)
             d[field.name] = self._serialize(field_value)
@@ -139,22 +144,32 @@ class OptionsMixin:
             "\niii) be a subclass of OptionsMixin; or"
             "\niv) be of the form Optional[T] where T satisfies one of i), ii) or iii)"
             "\nv) be of the form list[T] where T satisfies one of i), ii) or iii)"
+            "\nvi) be of the form tuple[T, ...] where T satisfies one of i), ii) or iii)"
         )
         type_error_desc = f"Unsupported field type {t} found {cls}."
         if generic_isinstance(x, t):
             return x
         if is_optional(t):
             return None if x is None else cls._deserialize(x, unwrap_optional(t))
+        args = get_args(t)
         origin = get_origin(t)
         if origin is list and isinstance(x, list):
-            element_type = get_args(t)[0]
+            if len(args) != 1:
+                log.error(type_error_message)
+                raise TypeError(type_error_desc)
+            element_type = args[0]
             return [cls._deserialize(item, element_type) for item in x]
+        if origin is tuple and isinstance(x, (list, tuple)):
+            if not (len(args) == 2 and args[1] is ...):
+                log.error(type_error_message)
+                raise TypeError(type_error_desc)
+            element_type = args[0]
+            return tuple(cls._deserialize(item, element_type) for item in x)
         if origin is not None:
-            log.error(type_error_message)
-            raise TypeError(type_error_desc)
+            raise ValueError(f"Expected value of type {t}, but got {x}.")
         if issubclass(t, Enum):
             return t[x] if isinstance(x, str) else t(x)
-        if issubclass(t, OptionsMixin):
+        if issubclass(t, OptionsMixin) and isinstance(x, (dict, str)):
             return t.load(x)
         if t not in (int, float, str, bool):
             log.error(type_error_message)
@@ -171,4 +186,6 @@ class OptionsMixin:
             return {key: cls._serialize(value) for key, value in x.items()}
         if isinstance(x, list):
             return [cls._serialize(value) for value in x]
+        if isinstance(x, tuple):
+            return tuple(cls._serialize(value) for value in x)
         return x

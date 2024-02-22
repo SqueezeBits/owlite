@@ -1,6 +1,7 @@
 """CLI script to manage OwLite commands using argparse."""
 from argparse import ArgumentParser
 
+from ..constants import OWLITE_VERSION
 from ..exceptions import DeviceError, LoginError
 from ..logger import log
 from .commands.device_commands import DeviceCommands
@@ -19,6 +20,8 @@ def main() -> None:
     DeviceCommands.register_subcommand(commands_parser)
     UrlCommands.register_subcommand(commands_parser)
 
+    parser.add_argument("--version", "-v", action="store_true", help="show OwLite CLI version")
+
     # pylint: disable-next=too-few-public-methods, missing-class-docstring
     class _Default:
         # pylint: disable-next=missing-function-docstring
@@ -28,12 +31,15 @@ def main() -> None:
     parser.set_defaults(func=lambda _: _Default())
     args = parser.parse_args()
 
-    owlite_cli = args.func(args)
-    try:
-        owlite_cli.run()
-    except (LoginError, DeviceError) as e:
-        log.debug(e)
-        return
+    if args.version:
+        log.info(f"OwLite version {OWLITE_VERSION}")  # UX
+    else:
+        owlite_cli = args.func(args)
+        try:
+            owlite_cli.run()
+        except (LoginError, DeviceError) as e:
+            log.debug(e)
+            return
 
 
 if __name__ == "__main__":

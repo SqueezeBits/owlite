@@ -1,8 +1,8 @@
 from enum import Enum
 
 
-class PricingTier(Enum):
-    """User's pricing tier."""
+class PricePlan(Enum):
+    """User's pricing plan."""
 
     FREE = 0
     LITE = 1
@@ -11,8 +11,8 @@ class PricingTier(Enum):
 
     @property
     def paid(self) -> bool:
-        """Whether the status indicates if the tier is paid."""
-        return self != PricingTier.FREE
+        """Whether the status indicates if the plan is paid."""
+        return self != PricePlan.FREE
 
 
 class BenchmarkStatus(Enum):

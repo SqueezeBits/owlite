@@ -52,8 +52,10 @@ class WhoamiCommand(BaseUserCommand):
 
     def run(self) -> None:
         """Executes the whoami operation and prints the username."""
-        username = whoami().name
-        log.info(username)
+        userinfo = whoami()
+        log.info(userinfo.name)  # UX
+        log.info(f"Your price plan: {userinfo.plan.name}")  # UX
+        log.info(f"Your workgroup: {userinfo.workgroup}")  # UX
 
 
 class LogoutCommand(BaseUserCommand):

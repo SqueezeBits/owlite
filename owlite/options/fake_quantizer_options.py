@@ -1,5 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
+
+from typing_extensions import Self
 
 from owlite_core.logger import log, suppress_owlite_warnings
 
@@ -16,33 +18,33 @@ class FakeQuantizerOptions(OptionsMixin):
 
     qat_backward: QATBackwardType = QATBackwardType.ste
     ptq_calibration: PTQCalibrationType = PTQCalibrationType.absmax
-    precision: int = 8
-    per_channel: bool = False
-    symmetric: bool = True
-    learn_zero_point: bool = False
-    unsigned: bool = False
-    grad_scale: float = 1.000
-    percentile: Optional[float] = None
+    precision: int = field(default=8)
+    per_channel: bool = field(default=False)
+    symmetric: bool = field(default=True)
+    learn_zero_point: bool = field(default=False)
+    unsigned: bool = field(default=False)
+    grad_scale: float = field(default=1.000)
+    percentile: Optional[float] = field(default=None)
 
-    @staticmethod
-    def ste_per_channel(**kwargs: Any) -> "FakeQuantizerOptions":
+    @classmethod
+    def ste_per_channel(cls, **kwargs: Any) -> Self:
         """A convenience wrapper for creating options with "ste" backward and per channel quantization"""
-        return FakeQuantizerOptions(qat_backward=QATBackwardType.ste, per_channel=True, **kwargs)
+        return cls(qat_backward=QATBackwardType.ste, per_channel=True, **kwargs)
 
-    @staticmethod
-    def ste_per_tensor(**kwargs: Any) -> "FakeQuantizerOptions":
+    @classmethod
+    def ste_per_tensor(cls, **kwargs: Any) -> Self:
         """A convenience wrapper for creating options with "ste" backward and per tensor quantization"""
-        return FakeQuantizerOptions(qat_backward=QATBackwardType.ste, per_channel=False, **kwargs)
+        return cls(qat_backward=QATBackwardType.ste, per_channel=False, **kwargs)
 
-    @staticmethod
-    def clq_per_channel(**kwargs: Any) -> "FakeQuantizerOptions":
+    @classmethod
+    def clq_per_channel(cls, **kwargs: Any) -> Self:
         """A convenience wrapper for creating options with "clq" backward and per channel quantization"""
-        return FakeQuantizerOptions(qat_backward=QATBackwardType.clq, per_channel=True, **kwargs)
+        return cls(qat_backward=QATBackwardType.clq, per_channel=True, **kwargs)
 
-    @staticmethod
-    def clq_per_tensor(**kwargs: Any) -> "FakeQuantizerOptions":
+    @classmethod
+    def clq_per_tensor(cls, **kwargs: Any) -> Self:
         """A convenience wrapper for creating options with "clq" backward and per tensor quantization"""
-        return FakeQuantizerOptions(qat_backward=QATBackwardType.clq, per_channel=False, **kwargs)
+        return cls(qat_backward=QATBackwardType.clq, per_channel=False, **kwargs)
 
     def check_precision(self, precision: int) -> bool:
         """precision must be one of 4, 8 or 16"""

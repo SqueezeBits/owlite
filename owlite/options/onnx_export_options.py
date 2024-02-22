@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -10,4 +10,4 @@ class ONNXExportOptions:
     Users can set options for ONNX export using this class.
     """
 
-    opset_version: int = 17
+    opset_version: int = field(default=17)

@@ -1,3 +1,5 @@
+from .channel import Channel
+from .compression_option import CompressionOptions
 from .dynamic_input_options import DynamicAxisOptions, DynamicInputOptions, DynamicSizeOptions
 from .fake_quantizer_options import FakeQuantizerOptions
 from .onnx_export_options import ONNXExportOptions

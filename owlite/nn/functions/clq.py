@@ -1,34 +1,33 @@
-from typing import Any, Union
+# pylint: disable=unused-argument
+from typing import Any, Optional
 
 import torch
-from torch import BoolTensor, Tensor
+from torch import Tensor
 from torch.autograd import Function
 
 from .fake_quantize import fake_quantize
 
 
-# pylint: disable= abstract-method, arguments-differ
+# mypy: disable-error-code=override
+# pylint: disable-next=abstract-method
 class CLQFunction(Function):
     """An implementation of QAT function using CLQ (Constrained Learned Quantization)"""
 
-    # pylint: disable=unused-argument
-    @staticmethod
+    @staticmethod  # pylint: disable-next=arguments-differ
     def forward(
         ctx: Any,
         inputs: Tensor,
         step_size: Tensor,
         zero_point: Tensor,
-        grad_scale: Tensor,
+        grad_scale: float,
         quant_min: int,
         quant_max: int,
-        per_channel: Union[bool, BoolTensor],
-        compensate_zp: bool,  # compensate_zp is unused argument in symmetric quantization
-    ) -> Any:
+        axis: Optional[int],
+        compensate_zp: bool,  # compensate_zp is not used
+    ) -> Tensor:
         ctx.save_for_backward(inputs, step_size)
-        ctx.other = grad_scale, quant_min, quant_max, per_channel
-        return fake_quantize(inputs, step_size.abs(), zero_point, quant_min, quant_max, per_channel)
-
-    # pylint: enable= unused-argument
+        ctx.other = grad_scale, quant_min, quant_max, axis
+        return fake_quantize(inputs, step_size.abs(), zero_point, quant_min, quant_max, axis)
 
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:
@@ -50,7 +49,5 @@ class CLQFunction(Function):
         grad_output = grad_output * between
         return grad_output, grad_step_size, None, None, None, None, None, None
 
-
-# pylint: enable= abstract-method, arguments-differ
 
 clq_function = CLQFunction.apply

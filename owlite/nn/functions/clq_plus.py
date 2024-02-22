@@ -1,44 +1,43 @@
-from typing import Any
+from typing import Any, Optional
 
 import torch
+from torch import Tensor
 from torch.autograd import Function
 
 from .fake_quantize import fake_quantize
 
 
-# pylint: disable=abstract-method, arguments-differ, fixme, duplicate-code
+# mypy: disable-error-code=override
+# pylint: disable-next=abstract-method
 class CLQPlusFunction(Function):
     """An implementation of QAT function using CLQ+"""
 
-    @staticmethod
+    @staticmethod  # pylint: disable-next=arguments-differ
     def forward(
         ctx: Any,
-        inputs,
-        step_size,
-        zero_point,
-        grad_scale,
-        quant_min,
-        quant_max,
-        per_channel,
-        compensate_zp,
-    ):
+        inputs: Tensor,
+        step_size: Tensor,
+        zero_point: Tensor,
+        grad_scale: float,
+        quant_min: int,
+        quant_max: int,
+        axis: Optional[int],
+        compensate_zp: bool,
+    ) -> Tensor:
         ctx.save_for_backward(inputs, step_size, zero_point)
-        ctx.other = grad_scale, quant_min, quant_max, per_channel
-        if per_channel:
+        ctx.other = grad_scale, quant_min, quant_max, axis
+        if axis:
             for _ in range(inputs.dim() - 1):
                 zero_point = zero_point.unsqueeze(-1)
         inputs = inputs - zero_point
 
-        fq_output = fake_quantize(
-            inputs, step_size.abs(), torch.zeros_like(zero_point), quant_min, quant_max, per_channel
-        )
+        fq_output = fake_quantize(inputs, step_size.abs(), torch.zeros_like(zero_point), quant_min, quant_max, axis)
 
         if compensate_zp:
             fq_output += zero_point
         return fq_output
 
-    # pylint: disable= too-many-locals
-    @staticmethod
+    @staticmethod  # pylint: disable-next=arguments-differ
     def backward(ctx: Any, grad_output: Any) -> Any:
         inputs, step_size, zero_point = ctx.saved_tensors
         abs_step_size = step_size.abs()
@@ -80,7 +79,5 @@ class CLQPlusFunction(Function):
         grad_step_size = grad_step_size * (step_size.sign() + 0.5).sign()
         return grad_output, grad_step_size, grad_zero_point, None, None, None, None, None
 
-
-# pylint: enable= abstract-method, arguments-differ, too-many-locals
 
 clq_plus_function = CLQPlusFunction.apply

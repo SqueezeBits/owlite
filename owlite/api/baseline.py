@@ -28,7 +28,7 @@ class Baseline(Benchmarkable):
 
     project: Project
     experiments: dict[str, "Experiment"] = field(default_factory=dict)
-    input_signature: Optional[Union[Signature, DynamicSignature]] = None
+    input_signature: Optional[Union[Signature, DynamicSignature]] = field(default=None)
 
     @property
     def exists(self) -> bool:
@@ -85,10 +85,10 @@ class Baseline(Benchmarkable):
         name_from_resp = resp["baseline_name"]
         if name_from_resp != name:
             log.warning(
-                f"The baseline '{name}' already exists. " f"Created a new baseline '{name_from_resp}' at {project}"
-            )
+                f"The baseline '{name}' already exists. Created a new baseline '{name_from_resp}' at {project}"
+            )  # UX
         baseline = cls(name=name_from_resp, project=project, input_signature=None)
-        log.info(f"Created a new {baseline}")
+        log.info(f"Created a new {baseline}")  # UX
         project.baseline = baseline
         return baseline
 
@@ -127,7 +127,7 @@ class Baseline(Benchmarkable):
             ),
         )
 
-        log.info("Uploaded the model excluding parameters")
+        log.info("Uploaded the model excluding parameters")  # UX
 
     def payload(self, **kwargs: str) -> dict[str, str]:
         p = {

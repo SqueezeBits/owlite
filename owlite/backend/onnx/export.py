@@ -42,7 +42,7 @@ from .transforms import apply_onnx_transforms
 os.environ["ONNXSIM_FIXED_POINT_ITERS"] = "100"
 
 
-# pylint: disable=too-many-arguments, too-many-locals, invalid-name
+# pylint: disable-next=too-many-arguments, too-many-locals, invalid-name
 def export(
     module: torch.nn.Module,
     args: Union[tuple[Any, ...], torch.Tensor],
@@ -340,11 +340,11 @@ def export(
     location = f"{name}.bin"
     abs_location = os.path.join(model_dir, location)
 
-    log.info(f"Saving exported ONNX proto at {f} with external data {location}")
+    log.info(f"Saving exported ONNX proto at {f} with external data {location}")  # UX
     if model_dir:
         os.makedirs(model_dir, exist_ok=True)
     if abs_location is not None and os.path.isfile(abs_location):
-        log.warning(f"External data file at {abs_location} will be overwritten.")
+        log.warning(f"External data file at {abs_location} will be overwritten.")  # UX
         # os.remove is required since export_to_onnx_with_external_data opens the external data file with mode='r+b'
         os.remove(abs_location)
 
@@ -521,9 +521,6 @@ def _optimize_path(
     return onnx_proto
 
 
-# pylint: enable=invalid-name
-
-
 def name_anonymous_nodes(onnx_proto: ModelProto) -> ModelProto:
     counts: dict[str, int] = {}
     for node in onnx_proto.graph.node:
@@ -556,6 +553,8 @@ def get_default_input_names(
     Returns:
         list[str]: the list of input names in string.
     """
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
     if isinstance(onnx_export_args, torch.Tensor):
         args, kwargs = (onnx_export_args,), {}
     else:
@@ -594,9 +593,9 @@ def check_fake_quantization_condition(model: GraphModule) -> bool:
                 log.error(
                     f"({name}) : The step size contains negative numbers, but not using clq.\n"
                     f"{module}\nstep_size:{module.step_size.data}"
-                )
+                )  # UX
                 raise ValueError("The step size contains negative numbers.")
-            # check symmetricity
-            if module.symmetric.item() and hasattr(module, "zero_point") and module.zero_point.amax() > 0:
+            # check symmetry
+            if module.symmetric and module.zero_point.amax() > 0:
                 raise ValueError(f"({name}) : The zero point of symmetric quantization is not 0.")
     return True

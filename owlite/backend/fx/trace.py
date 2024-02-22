@@ -1,5 +1,6 @@
-# pylint: disable=protected-access
+# pylint: disable=protected-access, too-many-statements
 import inspect
+import logging
 import sys
 import traceback
 from collections import OrderedDict
@@ -15,8 +16,9 @@ from torch.nn.parallel import DataParallel, DistributedDataParallel
 
 from owlite_core.logger import log
 
-from ...enums import OwLiteStatus
+from ...enums import OwLiteStatus, ParamStatus
 from ..config import FORCE_OUTPUT_COMPATIBILITY
+from ..onnx.signature import map_signature
 from ..utils import (
     get_most_common_device,
     get_most_common_floating_point_type,
@@ -177,30 +179,31 @@ def create_output_adapter(output_structure: Any) -> Callable[[Any], Any]:
 
 
 # pylint: disable-next=missing-function-docstring
-def patched_wrapped_call(self: Any, obj: GraphModule, *args: Any, **kwargs: Any) -> Any:
-    params = OrderedDict(
-        (k, v) for i, (k, v) in enumerate(inspect.signature(self.cls.forward).parameters.items()) if i > 0
-    )
+def patched_wrapped_call(self: Any, obj: GraphModule, *_args: Any, **_kwargs: Any) -> Any:
+    param_status: dict[str, ParamStatus] = obj.meta.get("param_status", None)
 
-    if len(args) > len(params):
-        if not obj.meta.get("has_warned_ignored_args", False):
-            log.warning(
-                f"The last {len(args) - len(params)} arguments given to "
-                "the graph module's forward method will be ignored"
-            )
-            obj.meta["has_warned_ignored_args"] = True
-        args = args[: len(params)]
+    if param_status:
+        ignored_keys = [name for name, status in param_status.items() if status != ParamStatus.ALIVE]
+        kwargs = {key: arg for key, arg in _kwargs.items() if key not in ignored_keys}
 
-    ignored_keys = [*filter(lambda key: key not in params, kwargs)]
-    if ignored_keys:
-        if not obj.meta.get("has_warned_ignored_kwargs", False):
-            log.warning(
-                "The following keyword arguments given to the graph module's forward method will be ignored: "
-                f"{', '.join(ignored_keys)}"
+        kept_names = [name for name, status in param_status.items() if status != ParamStatus.PURGED]
+        args = tuple(
+            a
+            for i, a in enumerate(_args)
+            if i < len(kept_names) and param_status.get(kept_names[i]) == ParamStatus.ALIVE
+        )
+        if log.level <= logging.DEBUG:
+            log.debug(
+                f"{len(_kwargs) - len(kwargs)} out of {len(_kwargs)} kwargs dropped. "
+                f"({[key for key in ignored_keys if key in _kwargs]})"
             )
-            obj.meta["has_warned_ignored_kwargs"] = True
-        for key in ignored_keys:
-            kwargs.pop(key)
+            dropped_indices = tuple(
+                i for i in range(len(_args)) if i < len(kept_names) and param_status[kept_names[i]] != ParamStatus.ALIVE
+            )
+            log.debug(f"{len(_args) - len(args)} out of {len(_args)} args dropped. ({dropped_indices})")
+    else:
+        args = _args
+        kwargs = _kwargs
 
     # pylint: disable-next=broad-exception-caught
     # ruff: noqa: B904
@@ -289,28 +292,106 @@ def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphMo
         )
 
     graph_module = apply_graph_module_transforms(graph_module)
-
-    original_params = inspect.signature(model.forward).parameters
-    graph_module_params = inspect.signature(graph_module.forward).parameters
-
-    ignored_params = OrderedDict(
-        filter(
-            lambda item: (
-                item[0] not in graph_module_params
-                and item[1].kind
-                not in (
-                    inspect._ParameterKind.VAR_POSITIONAL,
-                    inspect._ParameterKind.VAR_KEYWORD,
-                )
-            ),
-            original_params.items(),
-        )
-    )
-    if ignored_params:
-        log.warning(
-            "The following parameters will be dropped from the graph module's forward method: "
-            f"{', '.join(ignored_params)}"
-        )
     graph_module.train(training_status)
     graph_module.meta["owlite_status"] = OwLiteStatus.NOT_COMPRESSED
+
+    original_params = {**inspect.signature(model.forward).parameters}
+    graph_module_params = {**inspect.signature(graph_module.forward).parameters}
+    log.debug(f"original_params: {[*original_params.keys()]}")
+    log.debug(f"graph_module_params: {[*graph_module_params.keys()]}")
+    graph_module.meta["original_params"] = original_params
+
+    if any(
+        param.kind in (inspect._ParameterKind.VAR_POSITIONAL, inspect._ParameterKind.VAR_KEYWORD)
+        for param in original_params.values()
+    ):
+        log.debug_warning("The original module has variadic positional or keyword argument")
+        return graph_module
+
+    if not all(name in original_params for name in graph_module_params):
+        log.debug_warning("torch.compile has completely renamed all parameters")
+        return graph_module
+
+    received_values = map_signature(model.forward, *args, **kwargs)
+    if log.level <= logging.DEBUG:
+        for name, val in received_values.items():
+            log.debug(f"{name}: {'empty' if val is inspect._empty else 'received'}")
+
+    param_status = {
+        name: (
+            ParamStatus.ALIVE
+            if name in graph_module_params
+            else (
+                # ParamStatus.KEPT if received_values[name] is not inspect._empty
+                ParamStatus.KEPT
+                if name in received_values
+                else ParamStatus.PURGED
+            )
+        )
+        for name in original_params
+    }
+    if log.level <= logging.DEBUG:
+        for name, status in param_status.items():
+            log.debug(f"{name}: {status.name}")
+
+    graph_module.meta["param_status"] = param_status
+
+    if not param_status:
+        return graph_module
+
+    def warn_dropped_inputs() -> None:
+        indent4 = " " * 4
+        indent8 = " " * 8
+
+        def red(s: str) -> str:
+            return f"\033[91m{s}\033[0m"
+
+        def yellow(s: str) -> str:
+            return f"\u001b[33m{s}\033[0m"
+
+        def strikethrough(s: str) -> str:
+            return "\u0336".join((*s, ""))
+
+        def as_snippet(param: inspect.Parameter, status: ParamStatus) -> str:
+            default_exists = has_default(param)
+            snippet = f"{param.name}={param.default}" if default_exists else param.name
+            comment: Optional[str] = None
+            match status, default_exists:
+                case ParamStatus.ALIVE, _:
+                    pass
+                case ParamStatus.KEPT, False:
+                    snippet = yellow(snippet)
+                    comment = f"will be ignored but {red('required')}"
+                case (ParamStatus.PURGED, _) | (ParamStatus.KEPT, True):
+                    snippet = red(strikethrough(snippet))
+                    comment = "will be ignored and optional"
+            snippet = f"{indent8}{snippet},"
+            if comment is not None:
+                snippet += f"  # <--- {comment}"
+            return snippet
+
+        def is_required(param: inspect.Parameter, status: ParamStatus) -> bool:
+            return has_default(param) and status == ParamStatus.KEPT
+
+        def has_default(param: inspect.Parameter) -> bool:
+            return param.default is not inspect._empty
+
+        params_snippet = "\n".join(as_snippet(param, param_status[name]) for name, param in original_params.items())
+        code_snippet = f"{indent4}def forward(\n{indent8}self,\n{params_snippet}\n{indent4}):\n{indent8}..."
+        extra_instruction = ""
+        if any(is_required(param, param_status[name]) for name, param in original_params.items()):
+            extra_instruction = (
+                "However, you might still need to provide some of the dropped inputs to the converted model "
+                "in order to synchronize the input signature with the original model. "
+            )
+        log.warning(
+            "The converted model has dropped inputs (i.e. inputs that does not affect model's output(s).) "
+            f"{extra_instruction}"
+            "See the comments in the following code snippet for more details:\n"
+            f"{code_snippet}"
+        )
+
+    if not all(status == ParamStatus.ALIVE for status in param_status.values()):
+        warn_dropped_inputs()
+
     return graph_module

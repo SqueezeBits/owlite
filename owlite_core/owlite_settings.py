@@ -2,7 +2,11 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from . import BaseURLs, ClassDecoder, ClassEncoder, Device, DeviceManager, Tokens, owlite_cache_dir, read_text
+from .cache import owlite_cache_dir
+from .cache.base_urls import BaseURLs
+from .cache.device_manager import Device, DeviceManager
+from .cache.text import read_text, write_text
+from .cache.tokens import Tokens
 from .logger import log
 
 
@@ -40,7 +44,7 @@ class OwLiteSettings:
         read_tokens = read_text(self.tokens_cache)
         if not read_tokens:
             return None
-        return json.loads(read_tokens, cls=ClassDecoder)
+        return Tokens.model_validate(json.loads(read_tokens))
 
     @tokens.setter
     def tokens(self, new_tokens: Optional[Tokens]) -> None:
@@ -51,7 +55,7 @@ class OwLiteSettings:
             If None, existing tokens will be removed.
         """
         if new_tokens:
-            self.tokens_cache.write_text(json.dumps(new_tokens, cls=ClassEncoder), encoding="utf-8")
+            write_text(self.tokens_cache, new_tokens.model_dump_json())
         else:
             self.tokens_cache.unlink(missing_ok=True)
 
@@ -63,25 +67,16 @@ class OwLiteSettings:
             dict[str, DeviceManager]: Device manager dictionary,
         """
 
-        def _backward_compatibility(cached_managers: dict) -> dict:
-            cached_managers.pop("DEFAULT", None)
-            cached_managers.pop("NEST", None)
-            for key, value in cached_managers.items():
-                if isinstance(value, str):
-                    new_value = DeviceManager(name=key, url=value)
-                    cached_managers[key] = new_value
-            self.devices_cache.write_text(json.dumps(cached_managers, cls=ClassEncoder), encoding="utf-8")
-            return cached_managers
-
-        default_manager = DeviceManager("NEST", self.base_url.NEST)
+        default_manager = DeviceManager(name="NEST", url=self.base_url.NEST)
         registered_managers = {"NEST": default_manager}
 
         cache_content = read_text(self.devices_cache)
         if cache_content is None:
             return registered_managers
 
-        cached_managers: dict[str, DeviceManager] = json.loads(cache_content, cls=ClassDecoder)
-        cached_managers = _backward_compatibility(cached_managers)
+        cached_managers: dict[str, DeviceManager] = {
+            key: DeviceManager.model_validate(val) for key, val in json.loads(cache_content).items()
+        }
         assert cached_managers
         registered_managers.update(cached_managers)
         return registered_managers
@@ -95,7 +90,8 @@ class OwLiteSettings:
         manager_dict = self.managers
         manager_dict[manager.name] = manager
         manager_dict.pop("NEST")
-        self.devices_cache.write_text(json.dumps(manager_dict, cls=ClassEncoder), encoding="utf-8")
+        device_dict_json = json.dumps(manager_dict, default=lambda o: o.model_dump())
+        write_text(self.devices_cache, device_dict_json)
 
     def remove_manager(self, name: str) -> None:
         """Removes an existing device manager from the cache
@@ -107,7 +103,8 @@ class OwLiteSettings:
         manager_dict.pop(name, None)
         manager_dict.pop("NEST")
         if bool(manager_dict):
-            self.devices_cache.write_text(json.dumps(manager_dict, cls=ClassEncoder), encoding="utf-8")
+            device_dict_json = json.dumps(manager_dict, default=lambda o: o.model_dump())
+            write_text(self.devices_cache, json.dumps(device_dict_json))
         else:
             self.devices_cache.unlink(missing_ok=True)
 
@@ -121,7 +118,7 @@ class OwLiteSettings:
         """
         connected_device = read_text(self.connected_cache)
         if connected_device:
-            device = json.loads(connected_device, cls=ClassDecoder)
+            device = Device.model_validate(json.loads(connected_device))
             if not isinstance(device, Device):
                 log.warning("Your device connection is outdated. Please retry `owlite device connect --name (name)`")
                 self.connected_device = None
@@ -138,7 +135,7 @@ class OwLiteSettings:
             device (Device): The instance representing the device manager's name, url, and device to connect.
         """
         if device:
-            self.connected_cache.write_text(json.dumps(device, cls=ClassEncoder), encoding="utf-8")
+            write_text(self.connected_cache, device.model_dump_json())
         else:
             self.connected_cache.unlink(missing_ok=True)
 
@@ -155,7 +152,7 @@ class OwLiteSettings:
         base_urls = read_text(self.urls_cache)
         if not base_urls:
             return BaseURLs()
-        return json.loads(base_urls, cls=ClassDecoder)
+        return BaseURLs.model_validate(json.loads(base_urls))
 
     @base_url.setter
     def base_url(self, base_urls: BaseURLs) -> None:
@@ -168,7 +165,7 @@ class OwLiteSettings:
             ValueError: If the provided 'base_urls' instance is invalid or incomplete.
         """
 
-        self.urls_cache.write_text(json.dumps(base_urls, cls=ClassEncoder))
+        write_text(self.urls_cache, base_urls.model_dump_json())
 
 
 OWLITE_SETTINGS = OwLiteSettings()
