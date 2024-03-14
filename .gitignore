@@ -8,10 +8,9 @@
 *.csv
 *.onnx
 *.bin
+*.engine
 __pycache__/
-__owlite
-condaenv.*.requirements.txt
 .DS_Store
 .vscode
 owlite.egg-info
-examples/
+build

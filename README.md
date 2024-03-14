@@ -1,4 +1,4 @@
-![](https://raw.githubusercontent.com/SqueezeBits/owlite/master/.github/images/owlite_logo.png)
+![OwLite logo](https://github.com/SqueezeBits/owlite/assets/64083281/abaa3ad9-0c86-4a9c-9b8d-f54ed6d9524b)
 
 <div align="center">
 <p align="center">
@@ -15,7 +15,7 @@
   <a href="https://squeezebits.gitbook.io/owlite/quick/readme"><img src="https://img.shields.io/badge/Documentation-FFA32C" /></a>
 
   <a href="https://github.com/SqueezeBits/owlite#installation"><img src="https://img.shields.io/badge/python-~=3.10-blue" /></a>
-  <a href="https://github.com/SqueezeBits/owlite/blob/master/requirements.txt"><img src="https://img.shields.io/badge/pytorch-2.0%20%7C%202.1-blue" /></a>
+  <a><img src="https://img.shields.io/badge/pytorch-2.0%20%7C%202.1%20%7C%202.2-blue" /></a>
   <a href="https://github.com/SqueezeBits/owlite/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-APGL--3.0-lightgray" /></a>
 </p>    
 </div>
@@ -55,14 +55,14 @@ To install this package, please use Python 3.10.
 
 Using pip (Recommended)
 ```bash
-pip install --extra-index-url https://pypi.ngc.nvidia.com git+https://github.com/SqueezeBits/owlite
+pip install owlite --extra-index-url https://pypi.squeezebits.com/
 ```
 
 From source
 ```bash
 git clone https://github.com/SqueezeBits/owlite.git
 cd owlite
-pip install --extra-index-url https://pypi.ngc.nvidia.com .
+pip install .
 ```
 
 ## Getting Started
@@ -77,4 +77,4 @@ Please contact [owlite-admin@squeezebits.com](mailto:owlite-admin@squeezebits.co
 
 <br>
 <br>
-<div align="center"><img src="https://raw.githubusercontent.com/SqueezeBits/owlite/master/.github/images/SqueezeBits_orange_H.png" width="300px"></div>
+<div align="center"><img src="https://github.com/SqueezeBits/owlite/assets/64083281/bdbf55a6-ead7-42d3-b0b7-f1e8eddfb558" width="300px"></div>

@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name="owlite"
+dynamic = ["version"]
+description = "OwLite - No-Code AI compression Toolkit"
+dependencies = [
+  "torch>=2.0,<2.3",
+  "onnxruntime",
+  "onnxsim",
+  "onnx_graphsurgeon@https://developer.download.nvidia.com/compute/redist/onnx-graphsurgeon/onnx_graphsurgeon-0.3.27-py2.py3-none-any.whl",
+  "colored",
+  "yacs",
+  "tabulate",
+  "requests",
+  "tqdm",
+  "pydantic",
+  "lazy_imports",
+]
+authors = [
+  {name = "SqueezeBits.inc", email = "owlite@squeezebits.com"}
+]
+maintainers = [
+  {name = "SqueezeBits.inc", email = "owlite@squeezebits.com"}
+]
+requires-python = "~=3.10"
+keywords=["torch", "onnx", "graph", "quantization"]
+classifiers=[
+  "Intended Audience :: Developers",
+  "Intended Audience :: Education",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: GNU Affero General Public License v3",
+  "Programming Language :: Python :: 3.10 :: Only",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Repository = "https://github.com/SqueezeBits/owlite"
+Documentation = "https://squeezebits.gitbook.io/owlite/quick/readme"
+
+
+[project.scripts]
+owlite = "owlite.owlite_core.cli.owlite_cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "owlite.owlite_core.constants.OWLITE_VERSION"}
