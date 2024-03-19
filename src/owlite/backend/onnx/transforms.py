@@ -503,13 +503,22 @@ def eliminate_nop_reformatting_sequences(graph: gs.Graph) -> gs.Graph:
 def remove_if_dropout_op_with_ratio_zero(node: gs.Node, graph: gs.Graph) -> None:
     if node.op != "Dropout":
         return
-    ratio_input_node = input_node_of(node, 1, 0)
 
-    if ratio_input_node is None or "value" not in ratio_input_node.attrs:
+    if len(node.inputs) == 1:
         return
 
-    if ratio_input_node.attrs["value"].values.item() != 0.0:
-        return
+    if isinstance(node.inputs[1], gs.Variable):
+        ratio_input_node = input_node_of(node, 1, 0)
+
+        if ratio_input_node is None or "value" not in ratio_input_node.attrs:
+            return
+
+        if ratio_input_node.attrs["value"].values.item() != 0.0:
+            return
+
+    else:
+        if node.inputs[1].values.item() != 0.0:
+            return
 
     remove_if_has_unique_non_optional_input_and_unique_used_output(node, graph)
 

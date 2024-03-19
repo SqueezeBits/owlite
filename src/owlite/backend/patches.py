@@ -206,6 +206,7 @@ def patched_replicate_for_data_parallel(self):
     new_gm._parameters = OrderedDict()
     new_gm._buffers = new_gm._buffers.copy()
     new_gm._modules = new_gm._modules.copy()
+    new_gm.graph.owning_module = self
 
     return new_gm
 
