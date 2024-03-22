@@ -1,4 +1,5 @@
 import inspect
+import json
 from copy import deepcopy
 from typing import Any, Callable, Optional, Union
 
@@ -39,6 +40,9 @@ class Signature(list[tuple[str, tuple[int, ...]]]):
             Optional[tuple[int, ...]]: The shape of the input tensor if found, `None` otherwise.
         """
         return self.asdict().get(name)
+
+    def __str__(self) -> str:
+        return json.dumps(self)
 
     @classmethod
     def from_onnx(
@@ -92,7 +96,7 @@ class Signature(list[tuple[str, tuple[int, ...]]]):
         signature = cls()
         for name, value in signature_map.items():
             if isinstance(value, torch.Tensor):
-                signature.append((name, value.shape))
+                signature.append((name, tuple(value.shape)))
                 continue
             if isinstance(value, tuple):
                 signature.extend((f"{name}_{i}", t.shape) for i, t in enumerate(value) if isinstance(t, torch.Tensor))
@@ -104,6 +108,22 @@ class Signature(list[tuple[str, tuple[int, ...]]]):
 
         if options is not None:
             return dynamize_signature(signature, options)
+        return signature
+
+    @classmethod
+    def from_str(
+        cls,
+        string: str,
+    ) -> Union["Signature", DynamicSignature]:
+        """Creates the signature from string provided for API response.
+        Args:
+            string (str): A string.
+        Returns:
+            Union["Signature", DynamicSignature]: A `Signature` object if `options` is `None`,
+                `DynamicSignature` object otherwise.
+        """
+        signature_list = json.loads(string)
+        signature = cls((name, tuple(value)) for name, value in signature_list if isinstance(name, str))
         return signature
 
 

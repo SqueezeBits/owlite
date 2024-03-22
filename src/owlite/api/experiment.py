@@ -191,10 +191,22 @@ class Experiment(Benchmarkable):
         self.input_signature = Signature.from_onnx(proto, dynamic_axis_options)
         log.debug(f"Experiment signature: {self.input_signature}")
 
-        file_dest_url = MAIN_API_BASE.post(
-            "/projects/runs/data/upload",
-            json=self.payload(input_shape=json.dumps(self.input_signature)),
-        )
+        try:
+            file_dest_url = MAIN_API_BASE.post(
+                "/projects/runs/data/upload",
+                json=self.payload(input_shape=json.dumps(self.input_signature)),
+            )
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 400:
+                err_msg = e.response.json()
+                if "shapes mismatch" in err_msg["detail"]:
+                    log.error(
+                        "Input signature of current experiment does not match with baseline's. "
+                        f"Please compare current input signature: {json.dumps(self.input_signature)} "
+                        f"and baseline input signature: {self.baseline.input_signature}"
+                    )  # UX
+                    raise RuntimeError("Input signature mismatch") from e
+            raise e
         assert file_dest_url is not None and isinstance(file_dest_url, str)
         upload_file_to_url(self.onnx_path, file_dest_url)
 

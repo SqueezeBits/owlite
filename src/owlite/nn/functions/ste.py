@@ -13,8 +13,7 @@ from .fake_quantize import fake_quantize
 class STEFunction(Function):
     r"""Fake quantizing function for QAT using STE (Straight-Through Estimator).
 
-    For quant_min <= input <= quant_max the gradient passes straight through,
-    otherwise the gradient is zero
+    For $$ quant\_min $$ <= `input` <= $$ quant\_max $$ the gradient passes straight through,
 
     In **STE(Straight Through Estimation)** method, the gradient of the round
     function used in fake quantization is approximated as 1, and
@@ -27,7 +26,7 @@ class STEFunction(Function):
     When $$x$$ is input of FakeQuantize .
 
     $$
-    \\hat{x} = \text{FakeQuantize}(x) \\
+    \hat{x} = \text{FakeQuantize}(x)
     $$
 
 

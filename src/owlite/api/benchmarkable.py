@@ -331,8 +331,10 @@ class Benchmarkable:
                     error_msg = _failed_msg.get(new_status, "Benchmarking failed with an unexpected error")
                     print()
                     log.error(
-                        f"{error_msg}. Please try again, and if the problem "
-                        f"persists, please report the issue at {OWLITE_REPORT_URL} for further assistance"
+                        f"{info.get('error_log', '') if new_status == BenchmarkStatus.BENCHMARK_ERR else ''}"
+                        f"\n\t\t{error_msg}. "
+                        "\n\t\tPlease try again, and if the problem persists, "
+                        f"please report the issue at {OWLITE_REPORT_URL} for further assistance"
                     )  # UX
                     raise RuntimeError("Benchmarking failed")
 

@@ -30,29 +30,6 @@ class Baseline(Benchmarkable):
     input_signature: Optional[Union[Signature, DynamicSignature]] = field(default=None)
 
     @property
-    def exists(self) -> bool:
-        """Checks if the baseline represented by this object actually exists
-
-        Raises:
-            e (requests.exceptions.HTTPError): When unexpected error has been thrown.
-
-        Returns:
-            bool: True if it exists, False otherwise.
-        """
-        try:
-            resp = MAIN_API_BASE.post(
-                "/projects/baselines/check",
-                json=self.payload(),
-            )
-            assert isinstance(resp, bool)
-            return resp
-        except requests.exceptions.HTTPError as e:
-            if e.response is not None and e.response.status_code == 404:
-                return False
-
-            raise e
-
-    @property
     def home(self) -> str:
         return os.path.join(self.project.home, self.name)
 
@@ -64,6 +41,16 @@ class Baseline(Benchmarkable):
     def url(self) -> str:
         # TODO (huijong): make this url point to the insight page of the baseline.
         return self.project.url
+
+    @property
+    def device(self) -> str:
+        if getattr(self, "_benchmarked_device", None) is not None:
+            return self._benchmarked_device
+        return super().device
+
+    @device.setter
+    def device(self, name: str) -> None:
+        self._benchmarked_device = name
 
     @classmethod
     def create(cls, project: Project, name: str) -> Self:
@@ -99,14 +86,29 @@ class Baseline(Benchmarkable):
             project (Project): An OwLite project
             name (str): The name of an existing baseline in the project
 
+        Raises:
+            e (requests.exceptions.HTTPError): When unexpected error has been thrown.
+
         Returns:
             Optional[Baseline]: the existing baseline if found, `None` otherwise.
         """
-        baseline = cls(name=name, project=project, input_signature=None)
-        if baseline.exists:
-            project.baseline = baseline
-            return baseline
-        return None
+        try:
+            resp = MAIN_API_BASE.post(
+                "/projects/baselines/check",
+                json=Baseline(name=name, project=project, input_signature=None).payload(),
+            )
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                return None
+            raise e
+
+        assert isinstance(resp, dict)
+        input_signature = Signature.from_str(resp["input_shape"]) if resp["input_shape"] else None
+        baseline = cls(name=name, project=project, input_signature=input_signature)
+        baseline.device = resp["device_name"]
+
+        project.baseline = baseline
+        return baseline
 
     def upload(
         self,

@@ -12,7 +12,7 @@ from torch.nn.parallel import DataParallel, DistributedDataParallel
 
 from .api import Baseline, Experiment, Project
 from .backend.fx.trace import symbolic_trace
-from .backend.signature import DynamicSignature, update_dynamic_signature
+from .backend.signature import DynamicSignature, Signature, update_dynamic_signature
 from .compression import compress
 from .options import DynamicAxisOptions, DynamicInputOptions, ONNXExportOptions
 from .owlite_core.constants import OWLITE_REPORT_URL, OWLITE_VERSION
@@ -40,27 +40,32 @@ class OwLite:
         *args: Any,
         **kwargs: Any,
     ) -> GraphModule:
-        """Converts your model into a `torch.fx.GraphModule` object using the example input(s) provided.
+        r"""Converts your model into a `torch.fx.GraphModule` object using the example input(s) provided.
 
         {% hint style="warning” %}
+
         The example input(s) provided for `owl.convert` will also be used by
         [`owl.export`](https://squeezebits.gitbook.io/owlite/python-api/owlite.owlite.owlite/owlite.owlite.export) for
         the ONNX and TensorRT conversion afterward. Therefore, it is crucial to provide appropriate example input(s)
         to ensure the correct behavior of your model.
+
         {% endhint %}
 
         Args:
             model (`torch.nn.Module`): The model to be compressed. Note that it must be an instance of
             `torch.nn.Module`, but not `torch.nn.DataParallel` or `torch.nn.DistributedDataParallel`.
-            See [troubleshooting - Models wrapped with `torch.nn.DataParallel` or
-            `torch.nn.parallel.DistributedDataParallel`](https://squeezebits.gitbook.io/owlite/troubleshooting/
-            troubleshooting#models-wrapped-with-torch.nn.dataparallel-or-torch.nn.parallel.distributeddataparallel)
+            See
+            [troubleshooting - Models wrapped with `torch.nn.DataParallel` or `torch.nn.parallel.DistributedDataParallel`](https://squeezebits.gitbook.io/owlite/troubleshooting/troubleshooting#models-wrapped-with-torch.nn.dataparallel-or-torch.nn.parallel.distributeddataparallel)
             for more details.
-            *args, **kwargs: the example input(s) that would be passed to the model’s forward method.
-            These example inputs are required to convert the model into a [`torch.fx.GraphModule`]
-            (https://pytorch.org/docs/stable/fx.html) instance. Each input must be one of the following:
+            *args, **kwargs: the example input(s) that would be passed to the model's forward method.
+            These example inputs are required to convert the model into a
+            [`torch.fx.GraphModule`](https://pytorch.org/docs/stable/fx.html)
+            instance. Each input must be one of the following:
+
                 * A `torch.Tensor` object
+
                 * A tuple of `torch.Tensor` objects
+
                 * A dictionary whose keys are strings and values are `torch.Tensor` objects.
 
         Returns:
@@ -79,7 +84,7 @@ class OwLite:
 
         2. **Experiment Mode**: In this mode, the converted `torch.fx.GraphModule` object will be further modified
         according to the compression configuration from the experiment. This configuration could have been created by
-        the user on the OwLite website, or copied from another experiment (in 'duplicate from’ mode). If there’s no
+        the user on the OwLite website, or copied from another experiment (in 'duplicate from' mode). If there's no
         compression configuration, it returns the same model as in baseline mode. For dynamic batch size baseline
         model without compression, create an experiment.
 
@@ -91,7 +96,7 @@ class OwLite:
         cannot be traced, it throws an error with a message.
 
         2. **Compression**: If in experiment mode, `owl.convert` applies a compression configuration to the traced
-        model. `owl.convert` doesn’t compress the model if there’s no compression configuration created on the web.
+        model. `owl.convert` doesn't compress the model if there's no compression configuration created on the web.
 
         3. **Model Return**: `owl.convert` returns the converted model.
 
@@ -131,12 +136,12 @@ class OwLite:
         This code will create a sample model, convert it to a GraphModule in baseline mode, and export it to ONNX.
         The output of the code is as follows:
 
-        ```bash
+        ```
         OwLite [INFO] Connected device: NVIDIA RTX A6000
         OwLite [WARNING] Existing local directory found at /home/sqzb/workspace/owlite/testProject/sampleModel/sample
         Model. Continuing this code will overwrite the data
-        OwLite [INFO] Created new project 'testProject’
-        OwLite [INFO] Created new baseline 'sampleModel’ at project 'testProject’
+        OwLite [INFO] Created new project 'testProject'
+        OwLite [INFO] Created new baseline 'sampleModel' at project 'testProject'
         OwLite [INFO] Converted the model
         GraphModule(
         (self_conv1): Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1))
@@ -207,13 +212,13 @@ class OwLite:
         This code will create a sample model, convert it to a GraphModule in experiment mode, and apply the compression
         configuration from the `init` function. The output of the code is as follows:
 
-        ```bash
+        ```
         OwLite [INFO] Connected device: NVIDIA RTX A6000
         OwLite [INFO] Experiment data will be saved in /home/sqzb/workspace/owlite/testProject/sampleModel/conv
-        OwLite [INFO] Loaded existing project 'testProject’
-        OwLite [INFO] Existing compression configuration for 'conv’ found
+        OwLite [INFO] Loaded existing project 'testProject'
+        OwLite [INFO] Existing compression configuration for 'conv' found
         OwLite [INFO] Model conversion initiated
-        OwLite [INFO] Compression configuration found for 'conv’
+        OwLite [INFO] Compression configuration found for 'conv'
         OwLite [INFO] Applying compression configuration
         OwLite [INFO] Converted the model
         GraphModule(
@@ -289,6 +294,16 @@ class OwLite:
         self.module_args = args
         self.module_kwargs = kwargs
 
+        if isinstance(self.target, Experiment):
+            input_signature = Signature.from_module(model, args, kwargs)
+            if not input_signature == self.target.baseline.input_signature:
+                log.error(
+                    "Input signature of current experiment does not match with baseline's. "
+                    f"Please compare current input signature: {input_signature} "
+                    f"and baseline input signature: {self.target.baseline.input_signature}"
+                )  # UX
+                raise RuntimeError("Input signature mismatch")
+
         if isinstance(self.target, Experiment) and self.target.has_config:
             model = compress(model, self.target.config)
             log.info("Applied compression configuration")  # UX
@@ -301,9 +316,10 @@ class OwLite:
         onnx_export_options: Optional[ONNXExportOptions] = None,
         dynamic_axis_options: Optional[Union[DynamicAxisOptions, dict[str, dict[str, int]]]] = None,
     ) -> None:
-        """Exports the model converted by `owl.convert` to ONNX format.
+        r"""Exports the model converted by `owl.convert` to ONNX format.
 
         {% hint style=“warning” %}
+
         The ONNX model created by `owl.export` will also be used by
         [`owl.benchmark`](https://squeezebits.gitbook.io/owlite/python-api/owlite.owlite.owlite/owlite.owlite.benchmark)
         for the TensorRT conversion afterward. Therefore, it is crucial to provide an appropriate pre-trained or
@@ -311,31 +327,34 @@ class OwLite:
 
         Generally, you can export any model with `owl.export` whether it is trained or not.
         However, keep in mind that some graph-level optimizations performed while building the TensorRT engine
-        depend on the values of your model’s weight.
+        depend on the values of your model's weight.
 
         For example, when you benchmark a quantized model without calibration, the `step_size` parameter of
         the fake quantizers in the model would be all initialized to zeros. These zero `step_size` values can make
         the behavior of the graph-level optimization different, leading to a different latency from a calibrated
-        model’s latency when you benchmark.
+        model's latency when you benchmark.
 
         Therefore, we **strongly recommend**
 
         1. to export for benchmarking a pre-trained model in the baseline mode; and
+
         2. to perform either [PTQ calibration](https://squeezebits.gitbook.io/owlite/python-api/owlite.calibrators) or
-        [QAT](https://squeezebits.gitbook.io/owlite/python-api/owlite.nn.function) in experiment mode.
+        [QAT](https://squeezebits.gitbook.io/owlite/python-api/owlite.nn.functions) in experiment mode.
+
         {% endhint %}
 
         Args:
             model (`torch.fx.GraphModule`): The model converted by `owl.convert`, but not `torch.nn.DataParallel`
             or `torch.nn.DistributedDataParallel`.
-                See [troubleshooting - Models wrapped with `torch.nn.DataParallel` or
-                `torch.nn.parallel.DistributedDataParallel`](https://squeezebits.gitbook.io/owlite/troubleshooting/troubleshooting#models-wrapped-with-torch.nn.dataparallel-or-torch.nn.parallel.distributeddataparallel)
+
+                * See
+                [troubleshooting - Models wrapped with `torch.nn.DataParallel` or `torch.nn.parallel.DistributedDataParallel`](https://squeezebits.gitbook.io/owlite/troubleshooting/troubleshooting#models-wrapped-with-torch.nn.dataparallel-or-torch.nn.parallel.distributeddataparallel)
                 for more details.
 
             onnx_export_options (`owlite.ONNXExportOptions`, `optional`): Additional options for exporting ONNX.
 
                 * OwLite exports your model into ONNX during the conversion using
-                [torch.onnx.export](https://pytorch.org/docs/stable/onnx_torchscript.html#torch.onnx.export)
+                [`torch.onnx.export`](https://pytorch.org/docs/stable/onnx_torchscript.html#torch.onnx.export)
                 behind the scenes. You can control some of the behaviors of `torch.onnx.export` by passing an
                 `owlite.ONNXExportOptions` object to the `onnx_export_options` argument of `owlite.export`.
                 Currently, you can only set `opset_version`, which defaults to 17. Other parameters of
@@ -388,6 +407,7 @@ class OwLite:
         1. **Baseline Mode**: In this mode, `owl.export` traces the input model with the example input(s) and exports
         it to ONNX. Then, it sends the ONNX graph and the model to the server. This allows users to view the model
         graph on the web and apply compression.
+
         2. **Experiment Mode**: In this mode, `owl.export` exports the model after applying the compression
         configuration from the experiment or dynamic export options.
 
@@ -397,6 +417,7 @@ class OwLite:
 
         1. **Exporting ONNX**: `owl.export` exports the input model to ONNX and saves it in your local workspace.
         In experiment mode, dynamic axes are applied to the model if provided.
+
         2. **Uploading ONNX**: `owl.export` then uploads the ONNX (without weights) to the server.
 
         ### Examples
@@ -408,7 +429,7 @@ class OwLite:
         model = owl.export(model)
         ```
 
-        ```bash
+        ```
         OwLite [INFO] Model conversion initiated
         ============= Diagnostic Run torch.onnx.export version 2.0.1+cu117 =============
         verbose: False, log level: Level.ERROR
@@ -435,7 +456,7 @@ class OwLite:
         )
         ```
 
-        ```bash
+        ```
         OwLite [INFO] Model conversion initiated
         ============= Diagnostic Run torch.onnx.export version 2.0.1+cu117 =============
         verbose: False, log level: Level.ERROR
@@ -455,7 +476,7 @@ class OwLite:
 
         OwLite will create ONNX graph file and parameter file with the hierarchical structure below.
 
-        ```bash
+        ```
         - owlite
         - testProject
             - SampleModel
@@ -512,7 +533,7 @@ class OwLite:
         self,
         dynamic_input_options: Optional[Union[DynamicInputOptions, dict[str, dict[str, int]]]] = None,
     ) -> None:
-        """Executes the benchmark for the converted model on a connected device.
+        r"""Executes the benchmark for the converted model on a connected device.
 
         `owl.benchmark` uses the ONNX created by `owl.export`. The ONNX is sent to the connected device and converted
         to a TensorRT engine, which is benchmarked behind the scenes. If the benchmark finishes successfully, the
@@ -521,6 +542,7 @@ class OwLite:
         [OwLite Web UI](https://owlite.ai/project).
 
         {% hint style="warning” %}
+
         In general, any model generated by `owl.export` can be benchmarked with `owl.benchmark`, regardless of
         whether it is trained or not. Additionally, the model to be benchmarked is already determined
         when `owl.export` is executed.
@@ -529,7 +551,8 @@ class OwLite:
         a pre-trained or calibrated model before using owl.export.
 
         For details on model preparation, please refer to the
-        [owl.export](https://squeezebits.gitbook.io/owlite/python-api/owlite.owlite.owlite/owlite.owlite.export).
+        [PYTHON API/OwLite/Export](https://squeezebits.gitbook.io/owlite/python-api/owlite.owlite.owlite/owlite.owlite.export)
+
         {% endhint %}
 
         Args:
@@ -586,8 +609,8 @@ class OwLite:
         2.  **Engine Export and Benchmark**: On the device, `owl.benchmark` exports the model to a TensorRT engine and
         benchmarks it. It returns the latency information and displays it on the terminal.
 
-            <pre><code><strong> **Interrupting the Benchmarking Process**
-            </strong> If the benchmarking process appears to be time-consuming, an interruption can be initiated with
+            <pre><code><strong> **Interrupting the Benchmarking Process** </strong>
+            If the benchmarking process appears to be time-consuming, an interruption can be initiated with
             ctrl-c. This action triggers an exit message, indicating the cessation of the current experiment on your
             end. However, the benchmarking process continues on the connected device.
 
@@ -598,7 +621,7 @@ class OwLite:
             not be possible after the interruption.
             </code></pre>
 
-        3. **Engine File Download**: The converted engine file is downloaded to the user’s workspace.
+        3. **Engine File Download**: The converted engine file is downloaded to the user's workspace.
 
         Following these steps, `owl.benchmark` effectively benchmarks the converted model
         and provides latency information.
@@ -629,7 +652,7 @@ class OwLite:
             )
         ```
 
-        ```bash
+        ```
         OwLite [INFO] Benchmark initiated for the experiment 'dynamic' for the baseline 'sampleModel'
         in the project 'testProject'
         OwLite [INFO] TensorRT benchmark requested
@@ -656,7 +679,7 @@ class OwLite:
 
         OwLite will create TensorRT engine file with the hierarchical structure below.
 
-        ```bash
+        ```
         - owlite
         - testProject
             - SampleModel
@@ -672,7 +695,7 @@ class OwLite:
         weights. Instead, a random weight engine will be created and you can only query its latency.
         You will not be able to get the generated engine.
 
-        ```bash
+        ```
         OwLite [INFO] Benchmark initiated for the experiment 'dynamic' for the baseline '"sampleModel”'
         in the project 'testProject'
         OwLite [INFO] TensorRT benchmark requested
@@ -864,12 +887,12 @@ def init(
 
     A typical output of this code is as follows:
 
-    ```bash
+    ```
     OwLite [INFO] Connected device: NVIDIA RTX A6000
     OwLite [WARNING] Existing local directory found at /home/sqzb/workspace/owlite/testProject/sampleModel/sampleModel.
     Continuing this code will overwrite the data
-    OwLite [INFO] Created new project 'testProject’
-    OwLite [INFO] Created new baseline 'sampleModel’ at project 'testProject’
+    OwLite [INFO] Created new project 'testProject'
+    OwLite [INFO] Created new baseline 'sampleModel' at project 'testProject'
     ```
 
     **Experiment Mode**
@@ -886,11 +909,11 @@ def init(
 
     A typical output of this code is as follows:
 
-    ```bash
+    ```
     OwLite [INFO] Connected device: NVIDIA RTX A6000
     OwLite [INFO] Experiment data will be saved in /home/sqzb/workspace/owlite/testProject/sampleModel/conv
-    OwLite [INFO] Loaded existing project 'testProject’
-    OwLite [INFO] Existing compression configuration for 'conv’ found
+    OwLite [INFO] Loaded existing project 'testProject'
+    OwLite [INFO] Existing compression configuration for 'conv' found
     ```
 
     OwLite stores files, such as ONNX or TensorRT engine, generated from your code at
@@ -903,8 +926,8 @@ def init(
 
     When there is no device connected, you might see the following warning messages:
 
-    ```bash
-    OwLite [WARNING] Connected device not found. Please connect the device by 'owlite device connect --name (name)’
+    ```
+    OwLite [WARNING] Connected device not found. Please connect the device by 'owlite device connect --name (name)'
     ```
 
     If you see the warning message above, you will encounter a failure in benchmark initialization if you have called
@@ -943,16 +966,6 @@ def init(
     if OWLITE_SETTINGS.tokens is None:
         log.error("Please log in using 'owlite login'. Account not found on this device")  # UX
         raise RuntimeError("OwLite token not found")
-
-    if OWLITE_SETTINGS.connected_device is None:
-        log.warning(
-            "Connected device not found. "
-            "You will be automatically connected to the default NEST device as you are subscribed to the free plan. "
-            "Please connect to a specific device using 'owlite device connect --name (name)' if needed"
-        )  # UX
-
-    else:
-        log.info(f"Connected device: {OWLITE_SETTINGS.connected_device.name}")  # UX
 
     _validate_names(
         project=project,
@@ -1001,6 +1014,23 @@ def init(
                 )  # UX
                 raise ValueError("Invalid experiment name")
             target = existing_experiment.clone(experiment)
+
+    if OWLITE_SETTINGS.connected_device is None:
+        log.warning(
+            "Connected device not found. "
+            "You will be automatically connected to the default NEST device as you are subscribed to the free plan. "
+            "Please connect to a specific device using 'owlite device connect --name (name)' if needed"
+        )  # UX
+
+    else:
+        device = OWLITE_SETTINGS.connected_device.name
+        log.info(f"Connected device: {device}")  # UX
+        if isinstance(target, Experiment) and device != target.baseline.device:
+            log.warning(
+                f"Benchmark device not matching baseline ({target.name}={device}, "
+                f"{target.baseline.name}={target.baseline.device}). "
+                "Results may vary from latency breakdowns shown in the editor."
+            )  # UX
 
     if os.path.exists(target.home):
         log.warning(
