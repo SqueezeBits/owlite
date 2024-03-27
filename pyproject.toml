@@ -7,6 +7,7 @@ name="owlite"
 dynamic = ["version"]
 description = "OwLite - No-Code AI compression Toolkit"
 dependencies = [
+  "onnx==1.15.*",
   "torch>=2.0,<2.3",
   "onnxruntime",
   "onnxsim",
