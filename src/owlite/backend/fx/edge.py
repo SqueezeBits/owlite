@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Optional
 
 import torch
 from torch.fx.node import Argument, Node, Target
@@ -13,20 +12,22 @@ from .types import Op
 
 @dataclass
 class Edge(ABC):
-    """Representation of an edge, the address of an input, of an FX node"""
+    """Representation of an edge, the address of an input, of an FX node."""
 
     root: Node
     key: str
-    tensor: Optional[TensorType] = field(default=None)
+    tensor: TensorType | None = field(default=None)
 
     def insert(self, op: Op, target: Target, *args: Argument, **kwargs: Argument) -> None:
-        """Inserts a new FX node along this edge
+        """Insert a new FX node along this edge.
 
         Args:
             op (Op): the op for the new FX node to be created
                 (See [torch.fx.Node](https://pytorch.org/docs/stable/fx.html#torch.fx.Node) for more details.)
             target (Target): the target for the new FX node to be created
                 (See [torch.fx.Node](https://pytorch.org/docs/stable/fx.html#torch.fx.Node) for more details.)
+            *args: arguments for the new FX node to be created
+            **kwargs: keyword arguments for the new FX node to be created
 
         Raises:
             TypeError: when the `op` and `target` are incompatible with each other
@@ -65,7 +66,7 @@ class Edge(ABC):
 
     @abstractmethod
     def update(self, node: Node) -> None:
-        """Updates the input source of the root node (`self.root`) to the `node`
+        """Update the input source of the root node (`self.root`) to the `node`.
 
         Args:
             node (Node): the new input node to replace the old input pointed by this edge
@@ -74,11 +75,13 @@ class Edge(ABC):
     @property
     @abstractmethod
     def arg(self) -> Argument:
-        """The argument pointed by this edge"""
+        """The argument pointed by this edge."""
 
     @cached_property
     def parent(self) -> Node:
-        """The parent node of pointed by this edge. This is exactly same as `self.arg` if it is already a `Node` object.
+        """The parent node of this edge.
+
+        This is exactly same as `self.arg` if it is already a `Node` object.
         Otherwise it is the new node created by `op="call_function", target=torch.tensor, args=(self.arg,)`
         with appropriate device and dtype.
         """
@@ -99,11 +102,11 @@ class Edge(ABC):
 
 
 class EdgeWithIntegralKey(Edge, ABC):
-    """The edge whose key is supposed be an integer index"""
+    """The edge whose key is supposed be an integer index."""
 
     @property
     def index(self) -> int:
-        """The key (forcefully) casted into integer index"""
+        """The key (forcefully) casted into integer index."""
         return int(self.key)
 
     def __repr__(self) -> str:
@@ -111,7 +114,7 @@ class EdgeWithIntegralKey(Edge, ABC):
 
 
 class AllInputNodes(EdgeWithIntegralKey):
-    """An edge accessed by `node.all_input_nodes`"""
+    """An edge accessed by `node.all_input_nodes`."""
 
     @property
     def arg(self) -> Node:
@@ -122,7 +125,7 @@ class AllInputNodes(EdgeWithIntegralKey):
 
 
 class Args(EdgeWithIntegralKey):
-    """An edge accessed by `node.args`"""
+    """An edge accessed by `node.args`."""
 
     @property
     def arg(self) -> Argument:
@@ -133,7 +136,7 @@ class Args(EdgeWithIntegralKey):
 
 
 class Kwargs(Edge):
-    """An edge accessed by `node.kwargs`"""
+    """An edge accessed by `node.kwargs`."""
 
     @property
     def arg(self) -> Argument:

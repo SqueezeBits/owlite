@@ -1,10 +1,10 @@
-"""BaseCLICommand class for using owlite"""
+"""BaseCLICommand class for using owlite."""
 from abc import ABC, abstractmethod
 from argparse import _SubParsersAction
 
 
 class BaseOwLiteCLICommand(ABC):
-    """Abstract base class defining the structure for OwLite CLI commands"""
+    """Abstract base class defining the structure for OwLite CLI commands."""
 
     @staticmethod
     @abstractmethod

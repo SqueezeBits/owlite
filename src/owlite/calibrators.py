@@ -1,10 +1,10 @@
 from types import TracebackType
-from typing import Optional
 
+from torch.fx.graph_module import GraphModule
 from torch.nn.parallel import DataParallel, DistributedDataParallel
 
 from .backend.fx.types import GraphModuleOrDataParallel
-from .enums import OwLiteStatus
+from .enums import ModelStatus
 from .nn import FakeQuantizer
 from .owlite_core.logger import log
 
@@ -17,7 +17,7 @@ def _prepare_for_calibration(model: GraphModuleOrDataParallel) -> None:
     """
     log.info("Preparing for calibration")  # UX
     for _, module in model.named_modules(remove_duplicate=True):
-        if isinstance(module, (FakeQuantizer,)):
+        if isinstance(module, FakeQuantizer):
             module.disable()
             module.calibrator.prepare()
     log.info("All fake quantizers in the model are now ready for calibration")  # UX
@@ -25,14 +25,14 @@ def _prepare_for_calibration(model: GraphModuleOrDataParallel) -> None:
 
 
 def _update_fake_quantizers(model: GraphModuleOrDataParallel) -> None:
-    """Calculate step size and zero point using data of calibrator and enabling quantization
+    """Calculate step size and zero point using data of calibrator and enabling quantization.
 
     Args:
         model(`GraphModuleOrDataParallel`): model to calibrate.
     """
     log.info("Updating fake quantizers based on collected data")
     for name, module in model.named_modules(remove_duplicate=True):
-        if isinstance(module, (FakeQuantizer,)):
+        if isinstance(module, FakeQuantizer):
             module.calibrator.update()
             if module.step_size.abs().max() <= 0:
                 log.error(
@@ -46,15 +46,21 @@ def _update_fake_quantizers(model: GraphModuleOrDataParallel) -> None:
                 )
                 module.step_size.data = module.step_size.data.abs()
             module.enable()
-    if isinstance(model, (DataParallel, DistributedDataParallel)):
-        model.module.meta["owlite_status"] = OwLiteStatus.CALIBRATED
+    if isinstance(model, DataParallel | DistributedDataParallel) and isinstance(model.module, GraphModule):
+        model.module.meta["status"] = ModelStatus.CALIBRATED
+    elif isinstance(model, GraphModule):
+        model.meta["status"] = ModelStatus.CALIBRATED
     else:
-        model.meta["owlite_status"] = OwLiteStatus.CALIBRATED
+        log.warning(
+            "It looks like the model provided to `owlite.convert` is contaminated or have not created by the "
+            "`OwLite.convert` method. The model might not be calibrated correctly."
+        )  # UX
+        return
     log.info("Updated fake quantizers. Calibration finished")  # UX
 
 
 class CalibrationContext:
-    """ContextManager for calibration"""
+    """ContextManager for calibration."""
 
     def __init__(self, model: GraphModuleOrDataParallel):
         self.model = model
@@ -65,9 +71,9 @@ class CalibrationContext:
 
     def __exit__(
         self,
-        exc_type: Optional[type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
     ) -> None:
         _update_fake_quantizers(self.model)
 

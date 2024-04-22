@@ -10,8 +10,7 @@ from .commands.user_commands import UserCommands
 
 
 def main() -> None:
-    """Main function to set up and run OwLite CLI commands."""
-
+    """Set up and run OwLite CLI commands."""
     parser = ArgumentParser("owlite", usage="owlite <command> [<args>]")
     commands_parser = parser.add_subparsers(help="owlite command helpers")
 
@@ -20,7 +19,7 @@ def main() -> None:
     DeviceCommands.register_subcommand(commands_parser)
     UrlCommands.register_subcommand(commands_parser)
 
-    parser.add_argument("--version", "-v", action="store_true", help="show OwLite CLI version")
+    parser.add_argument("--version", "-v", action="store_true", help="Display OwLite version")
 
     # pylint: disable-next=too-few-public-methods, missing-class-docstring
     class _Default:
@@ -33,13 +32,13 @@ def main() -> None:
 
     if args.version:
         log.info(f"OwLite version {OWLITE_VERSION}")  # UX
-    else:
-        owlite_cli = args.func(args)
-        try:
-            owlite_cli.run()
-        except (LoginError, DeviceError) as e:
-            log.debug(e)
-            return
+        return
+
+    owlite_cli = args.func(args)
+    try:
+        owlite_cli.run()
+    except (LoginError, DeviceError) as e:
+        log.debug(e)
 
 
 if __name__ == "__main__":

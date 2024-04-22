@@ -1,8 +1,9 @@
-# pylint: disable=invalid-name
+# pylint: disable=invalid-name, too-many-public-methods
 # ruff: noqa: N801
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 import torch
 from typing_extensions import Self
@@ -11,7 +12,7 @@ from ...calib import PercentileCalibrator
 from ...enums import PTQCalibrationType, QATBackwardType
 from ...nn.functions import FakeQuantizeSignature, clq_function
 from ...options.channel import Channel
-from ...options.fake_quantizer_options import FakeQuantizerOptions
+from ...options.fake_quantizer_options import FakeQuantizerOptions, Precision
 from ...owlite_core.logger import log
 
 if TYPE_CHECKING:
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 
 
 class parameter(property):
-    """The special property hosted by private parameter"""
+    """The special property hosted by private parameter."""
 
     def __init__(self, fget: Callable):
         name = fget.__name__
@@ -44,29 +45,13 @@ class parameter(property):
 
 # pylint: disable=too-many-instance-attributes
 class FakeQuantizer(torch.nn.Module, ABC):
-    """An implementation of fake quantization (a.k.a. quantization simulation)
+    """An implementation of fake quantization (a.k.a. quantization simulation).
 
-    ### Attributes
-    - __step_size__ (`torch.Tensor`): The quantization scale, determining the magnitude of each quantization interval.
-    - __zero_point__ (`torch.Tensor`) : The quantization zero_point. It may be expressed as a float in the context of
-        asymmetric quantization, while for symmetric quantization, it is fixed at 0.
-    - __precision__ (`torch.IntTensor`): The number of bits used for quantization.
-    - __symmetric__ (`torch.BoolTensor`): Whether symmetric quantization is applied.
-    - __unsigned__ (`torch.BoolTensor`): Whether unsigned quantization is applied
-    - __per_channel__ (`torch.BoolTensor`): Whether per-channel quantization or per-tensor quantization is applied
-    - __learn_zero_point__ (`torch.BoolTensor`): whether the zero point is learnable.
-    - __grad_scale__ (`torch.FloatTensor`): The gradient scaling factor of quantization parameters.
-    - __ptq_calibration__
-    - __qat_backward_type__
-
-    ### ReadOnly properties
-    - __qat_function__ (`Callable`): The autograd function providing forward and backward methods of this
-        fake quantizer for the quantization-aware training.
-    - __quant_min__ (`int`): lower bound of the quantized domain
-    - __quant_max__ (`int`): upper bound of the quantized domain
-    - __narrow__ (`bool`): whether to quantize with a narrow range.
-
-    e.g., if `True`, using quantization with range [-127, 127] instead of [-128, 127] when `precision=8`.
+    Attributes:
+        step_size: The step size for the fake quantization. The larger the step size, the shorter the length of
+            quantization intervals, and vice versa.
+        zero_point: The zero point for the fake quantization. When simulating symmetric quantization
+            (i.e. `self.symmetric` is `True`), this parameter will be fixed to 0 and remain unchanged.
     """
 
     def __init__(
@@ -75,16 +60,17 @@ class FakeQuantizer(torch.nn.Module, ABC):
         *,
         enable: bool = True,
         narrow_range: bool = False,
-        identification: Optional[str] = None,
+        identification: str | None = None,
     ):
-        """Initializes a FakeQuantizer instance.
+        """Initialize a `FakeQuantizer` instance.
 
         Args:
-            options (QuantizerOptions): options
-            enable (bool, optional): whether to enable this quantizer object as soon as it is initialized.
-                Defaults to True.
-            narrow_range (bool, optional): Use symmetric integer range for signed quantization
-                eg) [-127,127] instead of [-128,127] for num_bits=8. Default False.
+            options (FakeQuantizerOptions): Options for the fake quantizer.
+            enable (bool, optional): Whether to enable the fake quantizer. Defaults to `True`.
+            narrow_range (bool, optional): Whether the fake quantizer should use narrow range. Defaults to `False`.
+                e.g. quantized integer values will be clipped into range [-127,127] instead of [-128,127]
+                when `options.precision == 8` and `narrow_range` is `True`.
+            identification (str | None, optional): unique ID for the fake quantizer. Defaults to `None`.
 
         Raises:
             ValueError: if `options.ptq_calibration` is "percentile" but `options.percentile` is `None`.
@@ -103,9 +89,8 @@ class FakeQuantizer(torch.nn.Module, ABC):
         self._learn_zero_point = torch.nn.Parameter(torch.tensor(options.learn_zero_point), requires_grad=False)
         self._grad_scale = torch.nn.Parameter(torch.tensor(options.grad_scale), requires_grad=False)
         self._narrow_range = torch.nn.Parameter(torch.tensor(narrow_range), requires_grad=False)
-        self.id: Optional[str] = identification
+        self.id: str | None = identification
         self.is_enabled = enable
-        self.is_zero_point_folded = False
         self.qat_backward_type = options.qat_backward
         self.ptq_calibration = options.ptq_calibration
         calibrator_class = options.ptq_calibration.calibrator_class
@@ -121,26 +106,28 @@ class FakeQuantizer(torch.nn.Module, ABC):
     @classmethod
     def create(
         cls,
-        options: Optional[FakeQuantizerOptions],
-        channel: Optional[Channel] = None,
+        options: FakeQuantizerOptions | None,
+        channel: Channel | None = None,
         *,
         enable: bool = True,
         narrow_range: bool = False,
-        identification: Optional[str] = None,
-    ) -> Optional[Union["FakePerTensorQuantizer", "FakePerChannelQuantizer"]]:
-        """Creates a `FakeQuantizer` instance if options is not `None`, otherwise returns `None`
+        identification: str | None = None,
+    ) -> "FakePerTensorQuantizer | FakePerChannelQuantizer | None":
+        """Create a `FakeQuantizer` instance based on the provided options.
 
         Args:
-            options (Optional[FakeQuantizerOptions]): Options for fake quantizer to return. If `None`,
-                dose not create fake quantizer.
-            enable (bool, optional): If true, returns the enabled quantzier. If false, returns the quantizer
-                that was disabled. Defaults to `True`
-            narrow_range (bool, optional): If true, returns the quantzier with a narrow range. If false, it
-                does not have a narrow range. Defaults to `False`
+            options (FakeQuantizerOptions | None): Options for the fake quantizer.
+            channel (Channel | None, optional): if `channel` is provided and `options.per_channel` is `True`, a fake
+                per-channel quantizer will be created. Otherwise, a fake per-tensor quantizer will be created.
+            enable (bool, optional): Whether to enable the fake quantizer. Defaults to `True`.
+            narrow_range (bool, optional): Whether the fake quantizer should use narrow range. Defaults to `False`.
+                e.g. quantized integer values will be clipped into range [-127,127] instead of [-128,127]
+                when `options.precision == 8` and `narrow_range` is `True`.
+            identification (str | None, optional): unique ID for the fake quantizer. Defaults to `None`.
 
         Returns:
-            Optional[FakeQuantizer]: If the `options` is valid for quantization returns created fake quantizer.
-                Otherwise return `None`.
+            FakePerTensorQuantizer | FakePerChannelQuantizer | None: If the `options` is valid for
+                quantization returns created fake quantizer, `None` otherwise.
         """
         if options is None or options.precision > 8:
             return None
@@ -157,37 +144,53 @@ class FakeQuantizer(torch.nn.Module, ABC):
             options.per_channel = False
         return FakePerTensorQuantizer(options, enable=enable, narrow_range=narrow_range, identification=identification)
 
+    @classmethod
+    def check_if_enabled(cls, fake_quantizer: Self | None) -> TypeGuard[Self]:
+        """Check if the given fake quantizer (possibly `None`) is enabled.
+
+        Args:
+            fake_quantizer(FakeQuantizer | None): either a fake quantizer to verify or `None`.
+
+        Returns:
+            TypeGuard[FakeQuantizer]: `True` if `fake_quantizer` is not `None` and it is enabled, `False` otherwise.
+        """
+        if fake_quantizer is not None and fake_quantizer.is_enabled:
+            return True
+        return False
+
     @property
     @abstractmethod
-    def channel(self) -> Optional[Channel]:
-        """`The pre-defined channel axis and size of this fake quantizer if it is per-channel, `None` otherwise"""
+    def channel(self) -> Channel | None:
+        """The pre-defined channel of this fake quantizer if it is per-channel, `None` otherwise."""
 
     @property
     def per_channel(self) -> bool:
-        """`True` if this fake quantizer performs per-channel quantization, `False` otherwise.
-        (Equivalent to `self.channel is not None`)
-        """
+        """Whether to simulate per-channel quantization. (Equivalent to `self.channel is not None`)."""
         return self.channel is not None
 
     @parameter
-    def precision(self) -> int:  # type: ignore[empty-body]
-        """The precision of this fake quantizer"""
+    def precision(self) -> Precision:  # type: ignore[empty-body]
+        """The precision of this fake quantizer's underlying integer type."""  # noqa: D401
 
     @parameter
     def symmetric(self) -> bool:  # type: ignore[empty-body]
-        """`True` if this fake quantizer performs symmetric quantization, `False` otherwise"""
+        """Whether to simulate symmetric quantization."""
 
     @parameter
     def unsigned(self) -> bool:  # type: ignore[empty-body]
-        """`True` if this fake quantizer's underlying integer type is unsigned, `False` otherwise"""
+        """Whether this fake quantizer's underlying integer type is unsigned."""
 
     @parameter
     def grad_scale(self) -> float:  # type: ignore[empty-body]
-        """The gradient scale for this fake quantizer"""
+        """The gradient scale of this fake quantizer for updating step size in QAT."""  # noqa: D401
 
     @property
     def narrow_range(self) -> bool:
-        """`True` if this fake quantizer is using the narrow range, `False` otherwise"""
+        """Whether to apply narrow range clipping for this fake quantizer's underlying integer type.
+
+        e.g. quantized integer values will be clipped into range [-127,127] instead of [-128,127]
+        when `self.precision == 8` and `self.narrow_range` is `True`.
+        """
         if torch.jit.is_tracing():
             return False
         return self._narrow_range.item()  # type: ignore[return-value]
@@ -209,7 +212,10 @@ class FakeQuantizer(torch.nn.Module, ABC):
 
     @property
     def learn_zero_point(self) -> bool:
-        """`True` if this fake quantizer should learn zero point while training, `False` otherwise"""
+        """Whether to update `self.zero_point` during QAT.
+
+        Can be set to `True` only if `self.symmetric` is `False`
+        """
         if (zero_point := self.zero_point) is not None:
             return zero_point.requires_grad
         return self._learn_zero_point.item()
@@ -225,31 +231,26 @@ class FakeQuantizer(torch.nn.Module, ABC):
 
     @property
     def qat_function(self) -> FakeQuantizeSignature:
-        """The autograd function providing forward and backward methods of this fake quantizer
-        for the quantization-aware training"""
+        """The autograd function of this fake quantizer."""
         return self.qat_backward_type.function
 
     @property
     def quant_min(self) -> int:
-        """The minimum integer value this fake quantizer can handle"""
+        """The minimum integer value this fake quantizer can handle."""
         if self.narrow_range:
             return -(1 << (self.precision - 1)) + 1
         return 0 if self.unsigned else -(1 << (self.precision - 1))
 
     @property
     def quant_max(self) -> int:
-        """The maximum integer value this fake quantizer can handle"""
+        """The maximum integer value this fake quantizer can handle."""
         if self.narrow_range:
             return (1 << self.precision) - 1 + self.quant_min - 1
         return (1 << self.precision) - 1 + self.quant_min
 
     @property
     def maxabs_bound(self) -> int:
-        """The maximum absolute limit value of the quantized domain.
-
-        Returns:
-            int: A Maximum absolute bound value.
-        """
+        """The maximum absolute integer value that this fake quantizer can handle."""
         return max(abs(self.quant_min), abs(self.quant_max))
 
     @property
@@ -270,39 +271,42 @@ class FakeQuantizer(torch.nn.Module, ABC):
         )
 
     def enable(self) -> Self:
-        """Sets Quantizer in quantization enabling mode"""
+        """Enable this fake quantizer."""
         self.is_enabled = True
         return self
 
     def disable(self) -> Self:
-        """Sets quantizer in quantization disabling mode"""
+        """Disable this fake quantizer."""
         self.is_enabled = False
         return self
 
     def invert_signedness(self) -> Self:
-        """Inverts signedness of this fake quantizer"""
+        """Invert signedness of this fake quantizer's underlying integer type.
+
+        Equivalent to `self.unsigned = not self.unsigned`.
+        """
         self._unsigned.data = torch.logical_not(self._unsigned.data)
         return self
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """The forward pass of fake quantizer
+        """Apply fake quantization to the input tensor.
 
         Args:
             inputs (torch.Tensor): A tensor to fake-quantize.
 
-        Raises
-            ValueError: If fake quantizer has negative step_size or size of channel is invalid.
+        Raises:
+            ValueError: If fake quantizer has negative step size or its channel size mismatches with the `inputs`'.
 
-        Returns
-            torch.Tensor: If fake quantizer is enabled, it returns a fake-quantized tensor.
-                If fake quantizer is disable, it returns the value as entered.
+        Returns:
+            torch.Tensor: the fake-quantized tensor if this fake quantizer is enabled, the unchanged input tensor
+                otherwise.
         """
         if not self.is_enabled:
             return inputs
 
         if self.qat_function is not clq_function and not self.narrow_range and self.step_size.min() <= 0:
             log.error(
-                f"Expected step_size to be positive, but got step_size={self.step_size.data}. "
+                f"Expected `step_size` to be positive, but got `step_size={self.step_size.data}`. "
                 "Please try one of the suggestions below:\n"
                 '   * select "clq" from the "qat_backward" field in the OwLite Web UI (https://owlite.ai/project);\n'
                 "   * set the weight_decay of the fake quantizer's parameters to 0;\n"
@@ -319,7 +323,6 @@ class FakeQuantizer(torch.nn.Module, ABC):
             self.quant_min,
             self.quant_max,
             self.channel.axis if self.channel is not None else None,
-            not self.is_zero_point_folded,
         )
 
     # pylint: disable=protected-access
@@ -329,24 +332,14 @@ class FakeQuantizer(torch.nn.Module, ABC):
         string += f", quant_min: {self.quant_min}, quant_max: {self.quant_max}"
         string += f", symmetric: {self.symmetric}"
         string += f", qat_backward: {self.qat_backward_type.name}"
-        string += (
-            f", zero_point: {self.zero_point.item()}, is_zero_point_folded: {self.is_zero_point_folded}"
-            if not self.per_channel
-            else ""
-        )
+        string += f", zero_point: {self.zero_point.item()}" if not self.per_channel else ""
         string += f", is_enabled: {self.is_enabled}"
         string += f", calib: {self.calibrator.__class__.__name__}"
         return string
 
     def state_dict(  # type: ignore[no-untyped-def, override]
         self, *args, **kwargs
-    ) -> Union[OrderedDict[Any, Any], dict[str, Any]]:
-        """Stores the indices of ptq_calibration and qat_backward in addition to the torch state dict.
-
-        Returns:
-            dict:
-                a dictionary containing a whole state of the module.
-        """
+    ) -> OrderedDict[Any, Any] | dict[str, Any]:
         state: OrderedDict = super().state_dict(*args, **kwargs)
         prefix = kwargs.get("prefix", "")
         extra_state = {}
@@ -393,7 +386,7 @@ class FakeQuantizer(torch.nn.Module, ABC):
 
 
 class FakePerChannelQuantizer(FakeQuantizer):
-    """Fake quantizer that performs per-channel quantization"""
+    """Fake quantizer that simulates per-channel quantization."""
 
     def __init__(
         self,
@@ -402,7 +395,7 @@ class FakePerChannelQuantizer(FakeQuantizer):
         *,
         enable: bool = True,
         narrow_range: bool = False,
-        identification: Optional[str] = None,
+        identification: str | None = None,
     ):
         assert options.per_channel
         super().__init__(options, enable=enable, narrow_range=narrow_range, identification=identification)
@@ -417,7 +410,7 @@ class FakePerChannelQuantizer(FakeQuantizer):
 
     @property
     def channel(self) -> Channel:
-        return Channel(self._channel_axis.item(), self._channel_size.item())
+        return Channel(axis=self._channel_axis.item(), size=self._channel_size.item())
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         if self.is_enabled and not (
@@ -432,8 +425,9 @@ class FakePerChannelQuantizer(FakeQuantizer):
         return super().forward(inputs)
 
     def as_per_tensor(self) -> "FakePerTensorQuantizer":
-        """Creates a new fake per-tensor quantizer with the same option (except for `per_channel` value)
-        The `step_size` of the new fake per-tensor quantizer has the max value of `self` `step_size`.
+        """Create a new fake per-tensor quantizer with the same option (except for the `per_channel` value).
+
+        The `step_size` of the new fake per-tensor quantizer is initialized as the maximum element of `self.step_size`.
         """
         option = self.option
         option.per_channel = False
@@ -450,7 +444,7 @@ class FakePerChannelQuantizer(FakeQuantizer):
 
 
 class FakePerTensorQuantizer(FakeQuantizer):
-    """Fake quantizer that performs per-tensor quantization"""
+    """Fake quantizer that simulates per-tensor quantization."""
 
     def __init__(
         self,
@@ -458,7 +452,7 @@ class FakePerTensorQuantizer(FakeQuantizer):
         *,
         enable: bool = True,
         narrow_range: bool = False,
-        identification: Optional[str] = None,
+        identification: str | None = None,
     ):
         assert not options.per_channel
         super().__init__(options, enable=enable, narrow_range=narrow_range, identification=identification)
@@ -473,8 +467,10 @@ class FakePerTensorQuantizer(FakeQuantizer):
         return None
 
     def as_per_channel(self, channel: Channel) -> FakePerChannelQuantizer:
-        """Creates a new fake per-channel quantizer with the same option (except for `per_channel` value)
-        The `step_size` and `zero_point` of the new fake per-channel quantizer have the broadcasted values of `self`.
+        """Create a new fake per-channel quantizer with the same option (except for the `per_channel` value).
+
+        The `step_size` and `zero_point` of the new fake per-channel quantizer is initialized with shape
+        `(channel.size,)` filled with values in `self.step_size` and `self.zero_point`, respectively.
         """
         option = self.option
         option.per_channel = True

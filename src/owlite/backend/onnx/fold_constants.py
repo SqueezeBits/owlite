@@ -1,6 +1,3 @@
-# pylint: skip-file
-# ruff: noqa: N806
-# type: ignore
 import numpy as np
 from onnx_graphsurgeon.ir.graph import Graph
 from onnx_graphsurgeon.ir.tensor import Constant
@@ -39,7 +36,7 @@ def fold_constants(
         recurse_subgraphs (bool):
                 Whether to recursively fold constants in subgraphs.
                 Defaults to True.
-        partitioning (Union[str, None]):
+        partitioning (str | None):
                 Whether/How to partition the graph so that errors in folding one
                 part of a model do not affect other parts. Available modes are:
 
@@ -254,9 +251,7 @@ def fold_constants(
     # Pass 4: Shape Folding
 
     def get_producer(tensor, op):
-        """
-        Get the producer of the specified tensor iff it matches op
-        """
+        """Get the producer of the specified tensor iff it matches op."""
         if len(tensor.inputs) != 1:
             return None
 
@@ -266,9 +261,7 @@ def fold_constants(
         return node
 
     def get_input(node, index=0):
-        """
-        Get the input tensor of a node iff the input tensor is not already marked a graph constant.
-        """
+        """Get the input tensor of a node iff the input tensor is not already marked a graph constant."""
         if node is None:
             return None
 
@@ -281,9 +274,7 @@ def fold_constants(
         return inp
 
     def get_scalar_value(tensor):
-        """
-        Gets the scalar value of a constant tensor with a single item
-        """
+        """Gets the scalar value of a constant tensor with a single item."""
         if not tensor.shape:
             return tensor.values
         else:

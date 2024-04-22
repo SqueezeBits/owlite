@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Iterable
 from functools import reduce
 from itertools import chain
-from typing import Any, Optional, Union
+from typing import Any
 
 import onnx
 import onnx_graphsurgeon as gs
@@ -30,24 +30,32 @@ def _get_all_tensors_from_graph(graph: GraphProto) -> Iterable[TensorProto]:
 
 
 def export_with_external_data(
-    graph_or_model_proto: Union[gs.Graph, ModelProto],
+    graph_or_model_proto: gs.Graph | ModelProto,
     output_path: str,
     do_type_check: bool = True,
     all_tensors_to_one_file: bool = True,
-    location: Optional[str] = None,
+    location: str | None = None,
     size_threshold: int = 1024,
     convert_attribute: bool = False,
     **kwargs: Any,
 ) -> None:
-    """
-    Exports an onnx-graphsurgeon Graph to an ONNX model with external data.
+    """Export an onnx-graphsurgeon Graph to an ONNX model with external data.
 
     Args:
-        graph (Graph): The graph to export
+        graph_or_model_proto (ModelProto | gs.Graph): The ONNX graph or model proto to export
         output_path (str): The path to save ONNX file at.
             (The base directory will be automatically created if it doesn't exist.)
         do_type_check (bool): Whether to check that input and output tensors have data types defined, and fail if not.
-        kwargs: Additional arguments to onnx.helper.make_model
+        all_tensors_to_one_file (bool, optional): If true, save all tensors to one external file specified by location.
+            If false, save each tensor to a file named with the tensor name. Defaults to True.
+        location (str | None, optional): Specify the external file that all tensors to save to.
+            If not specified, will use the model name. Defaults to None.
+        size_threshold (int, optional): Threshold for size of data. Only when tensor's data is >= the size_threshold
+            it will be converted to external data. To convert every tensor with raw data to external data
+            set size_threshold=0. Defaults to 1024.
+        convert_attribute (bool, optional): If true, convert all tensors to external data.
+            If false, convert only non-attribute tensors to external data. Defaults to False.
+        kwargs: Additional arguments to onnx.helper.make_model.
 
     Returns:
         ModelProto: A corresponding ONNX model.
@@ -97,24 +105,28 @@ def convert_graph_to_external_data(
     graph: GraphProto,
     base_path: str,
     all_tensors_to_one_file: bool = True,
-    location: Optional[str] = None,
+    location: str | None = None,
     size_threshold: int = 1024,
     convert_attribute: bool = False,
 ) -> None:
-    """
-    Call to set all tensors with raw data as external data. This call should preceed 'save_model'.
-    'save_model' saves all the tensors data as external data after calling this function.
+    """Set all tensors with raw data as external data.
 
-    Arguments:
+    To save tensor data externally, this function should be called before save_model
+    as `onnx.save_model` will save all the tensor data as external data after calling this function.
+
+
+    Args:
         graph (GraphProto): Graph to be converted.
-        all_tensors_to_one_file (bool): If true, save all tensors to one external file specified by location.
-            If false, save each tensor to a file named with the tensor name.
-        location: specify the external file that all tensors to save to.
-            If not specified, will use the model name.
-        size_threshold: Threshold for size of data. Only when tensor's data is >= the size_threshold it will be
-            converted to external data. To convert every tensor with raw data to external data set size_threshold=0.
-        convert_attribute (bool): If true, convert all tensors to external data
-                       If false, convert only non-attribute tensors to external data
+        base_path (str): System path of a folder where tensor data is to be stored.
+        all_tensors_to_one_file (bool, optional): If true, save all tensors to one external file specified by location.
+            If false, save each tensor to a file named with the tensor name. Defaults to True.
+        location (str | None, optional): Specify the external file that all tensors to save to.
+            If not specified, will use the model name. Defaults to None.
+        size_threshold (int, optional): Threshold for size of data. Only when tensor's data is >= the size_threshold
+            it will be converted to external data. To convert every tensor with raw data to external data
+            set size_threshold=0. Defaults to 1024.
+        convert_attribute (bool, optional): If true, convert all tensors to external data.
+            If false, convert only non-attribute tensors to external data. Defaults to False.
     """
     tensors = _get_all_tensors_from_graph(graph) if convert_attribute else _get_initializer_tensors_from_graph(graph)
 

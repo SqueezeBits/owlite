@@ -1,8 +1,10 @@
-"""OwLite Base URL Management Module
+"""OwLite Base URL Management Module.
 
-This module handles the caching of base URLs used in OwLite APIs."""
+This module handles the caching of base URLs used in OwLite APIs.
+"""
 
 from ...owlite_core.logger import log
+from ..owlite_device_settings import OWLITE_DEVICE_SETTINGS
 from ..owlite_settings import OWLITE_SETTINGS
 from .device import disconnect_device
 
@@ -10,7 +12,7 @@ URL_NAME_LIST = ["FRONT", "MAIN", "DOVE", "NEST"]
 
 
 def save_base_url(name: str, url: str) -> None:
-    """Saves the base URL for an API in the cache.
+    """Save the base URL for an API in the cache.
 
     Args:
         name (str): A name of a URL.
@@ -28,9 +30,9 @@ def save_base_url(name: str, url: str) -> None:
 
     if (
         name == "NEST"
-        and OWLITE_SETTINGS.connected_device
-        and OWLITE_SETTINGS.connected_device.manager.name == name
-        and OWLITE_SETTINGS.connected_device.manager.url != url
+        and OWLITE_DEVICE_SETTINGS.connected
+        and OWLITE_DEVICE_SETTINGS.connected.manager.name == name
+        and OWLITE_DEVICE_SETTINGS.connected.manager.url != url
     ):
         disconnect_device()
 
@@ -38,14 +40,14 @@ def save_base_url(name: str, url: str) -> None:
 
 
 def print_base_urls() -> None:
-    """Prints base url in cache."""
+    """Print base url in cache."""
     base_urls = OWLITE_SETTINGS.base_url
     url_list = "\n".join([f"{name} : {getattr(base_urls, name)}" for name in URL_NAME_LIST])
     log.info(f"Base urls list\n{url_list}")  # UX
 
 
 def delete_base_url(name: str) -> None:
-    """Deletes url in cache.
+    """Delete url in cache.
 
     Args:
         name (str): base url's name
@@ -59,5 +61,5 @@ def delete_base_url(name: str) -> None:
     OWLITE_SETTINGS.base_url = base_urls
     log.info(f"Deleted the {name} API base")  # UX
 
-    if name == "NEST" and OWLITE_SETTINGS.connected_device and OWLITE_SETTINGS.connected_device.manager.name == name:
+    if name == "NEST" and OWLITE_DEVICE_SETTINGS.connected and OWLITE_DEVICE_SETTINGS.connected.manager.name == name:
         disconnect_device()

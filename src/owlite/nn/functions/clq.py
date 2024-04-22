@@ -1,5 +1,5 @@
 # pylint: disable=unused-argument
-from typing import Any, Optional
+from typing import Any
 
 import torch
 from torch import Tensor
@@ -11,11 +11,12 @@ from .fake_quantize import fake_quantize
 # mypy: disable-error-code=override
 # pylint: disable-next=abstract-method
 class CLQFunction(Function):
-    r"""An implementation of QAT function using CLQ (Constrained Learned Quantization)
+    r"""An implementation of QAT function using CLQ (Constrained Learned Quantization).
+
     In **CLQ(Constrained Learned Quantization)** method, instead of using a fixed set of quantization levels,
     this method adapts the scales during training to minimize the impact on model performance. Learnable step_size
     allows the model to be better adapted to the distribution of fed data.
-    ### Gradient of step\_size
+    ### Gradient of step\_size.
 
     When $$x$$ is input of $$FakeQuantize$$ and $$s$$ is step\_size of $$FakeQuantize$$
 
@@ -36,8 +37,7 @@ class CLQFunction(Function):
         grad_scale: float,
         quant_min: int,
         quant_max: int,
-        axis: Optional[int],
-        compensate_zp: bool,  # compensate_zp is not used
+        axis: int | None,
     ) -> Tensor:
         ctx.save_for_backward(inputs, step_size)
         ctx.other = grad_scale, quant_min, quant_max, axis

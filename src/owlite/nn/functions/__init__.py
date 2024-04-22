@@ -45,6 +45,5 @@ the training of the compressed model. In this way, the model learns more effecti
 to stabilize the training of the compressed model. In this way, the model generalizes better for unseen data.
 """
 from .clq import clq_function
-from .clq_plus import clq_plus_function
 from .fake_quantize import FakeQuantizeSignature, fake_quantize
-from .ste import ste_function
+from .ste import fake_quantize_ste_function, scaled_round_ste

@@ -1,38 +1,17 @@
-"""Device Management Module
+"""Device Management Module.
 
-Provides functions to manage device connections, device managers, and settings."""
+Provides functions to manage device connections, device managers, and settings.
+"""
 
-from ..cache.device_manager import Device, DeviceManager
+
+from ..cache.device import Device, DeviceManager
 from ..exceptions import DeviceError
 from ..logger import log
-from ..owlite_settings import OWLITE_SETTINGS
-from .api.device import get_devices
-
-
-def get_device_list(url: str) -> list[str]:
-    """Get devices connected to current device manager.
-
-    Raises:
-        HTTPError: When request was not successful.
-
-    Returns:
-        list[str]: A list of device names connected to device manager.
-    """
-
-    device_list = get_devices(url)
-    device_names: list[str] = []
-    for device in device_list:
-        assert isinstance(device, dict)
-        device_names.append(str(device.get("name", "")))
-
-    devices_repr = "\n".join(device_names)
-    log.debug(f"Found following devices from device manager : {url}\n{devices_repr}")
-
-    return device_names
+from ..owlite_device_settings import OWLITE_DEVICE_SETTINGS
 
 
 def add_manager(name: str, url: str) -> None:
-    """Adds a new device manager with the given name and url.
+    """Add a new device manager with the given name and url.
 
     Args:
         name (str): The name of the device manager.
@@ -42,36 +21,36 @@ def add_manager(name: str, url: str) -> None:
         DeviceError: If the device manager name already exists.
         HTTPError: If the request to the url fails.
     """
-    if name in OWLITE_SETTINGS.managers:
+    if name in OWLITE_DEVICE_SETTINGS.managers:
         log.error(f"The device '{name}' already exists. Please give it a different name")  # UX
-        raise DeviceError(f"Duplicate device found: {name}")
+        raise DeviceError(f"Duplicate device manager found: {name}")
 
-    get_devices(url)
+    manager = DeviceManager(name=name, url=url)
 
-    OWLITE_SETTINGS.add_manager(DeviceManager(name=name, url=url))
-    connected_device = OWLITE_SETTINGS.connected_device
-    if connected_device and name == connected_device.manager.name and url != connected_device.manager.url:
+    OWLITE_DEVICE_SETTINGS.add_manager(manager)
+    connected = OWLITE_DEVICE_SETTINGS.connected
+    if connected and name == connected.manager.name and url != connected.manager.url:
         disconnect_device()
     print_manager_list()
 
 
 def print_manager_list() -> None:
-    """Prints a list of added device managers"""
-    connected_device = OWLITE_SETTINGS.connected_device
+    """Print a list of added device managers."""
+    connected = OWLITE_DEVICE_SETTINGS.connected
     device_list = "\n".join(
         f"{manager.name}: {manager.url}"
         + (
-            f" -> connected to device '{connected_device.name}'"
-            if connected_device and manager.name == connected_device.manager.name
+            f" -> connected to device '{connected.name}'"
+            if connected and manager.name == connected.manager.name
             else ""
         )
-        for manager in OWLITE_SETTINGS.managers.values()
+        for manager in OWLITE_DEVICE_SETTINGS.managers.values()
     )
     log.info(f"Available device managers:\n{device_list}")  # UX
 
 
 def remove_manager(name: str) -> None:
-    """Removes the specified device manager.
+    """Remove the specified device manager.
 
     Args:
         name (str): The name of the device manager to remove.
@@ -80,87 +59,87 @@ def remove_manager(name: str) -> None:
         DeviceError: If the specified device manager does not exist or is NEST.
     """
     if name == "NEST":
-        log.error(f"Unable to delete the device as the device named '{name}'")  # UX
+        log.error("Unable to delete the NEST device manager")  # UX
         raise DeviceError(f"Invalid device name : {name}")
-    if name not in OWLITE_SETTINGS.managers:
-        log.error(f"Unable to delete the device as the device named '{name}' does not exist")  # UX
+    if name not in OWLITE_DEVICE_SETTINGS.managers:
+        log.error(f"Unable to delete the device manager '{name}' does not exist")  # UX
         raise DeviceError(f"Invalid device name : {name}")
-    OWLITE_SETTINGS.remove_manager(name)
+    OWLITE_DEVICE_SETTINGS.remove_manager(name)
     log.info(f"Removed the device manager: {name}")  # UX
 
-    connected_device = OWLITE_SETTINGS.connected_device
-    if connected_device and name == connected_device.manager.name:
+    connected = OWLITE_DEVICE_SETTINGS.connected
+    if connected and name == connected.manager.name:
         disconnect_device()
     print_manager_list()
 
 
 def connect_device(name: str) -> None:
-    """Connects to the device in selected device manager.
+    """Connect to the device in selected device manager.
 
     Raises:
         DeviceError: If the selected device manager doesn't exist.
     """
-    if name not in OWLITE_SETTINGS.managers:
+    if name not in OWLITE_DEVICE_SETTINGS.managers:
         log.error(
             f"No such device: '{name}'. Please add a device using 'owlite device add --name (name) --url (url)'"
         )  # UX
         raise DeviceError("Device not found")
-    manager = OWLITE_SETTINGS.managers[name]
-    assert manager.url
-    device = Device(name=_select_device(manager.url), manager=manager)
-    OWLITE_SETTINGS.connected_device = device
-    log.info(f"Connected to the device '{device.name}' at '{manager.name}' ({manager.url})")
+    manager = OWLITE_DEVICE_SETTINGS.managers[name]
+    OWLITE_DEVICE_SETTINGS.connected = _select_device(manager)
+    log.info(f"Connected to the device '{OWLITE_DEVICE_SETTINGS.connected}' at '{manager}'")
 
 
-def _select_device(url: str) -> str:
-    """Internal function to connect to the device and prompt the user to choose.
+def _select_device(manager: DeviceManager) -> Device:
+    """Connect to the device and prompt the user to choose.
+
+    Args:
+        manager (DeviceManager): The device manager to connect.
 
     Raises:
-        ValueError: If an invalid index or device is chosen.
+        DeviceError: If an invalid index or device is chosen.
 
     Returns:
-        str: The name of the connected device.
+        Device: The device to connect.
     """
-
-    device_list = get_device_list(url)
-    _device_list = "\n".join(f"{index}: {name}" for index, name in enumerate(device_list))
-    log.info(f"Available devices:\n{_device_list}")
+    devices = list(manager.devices.values())
+    _devices = "\n".join(f"{index}: {device}" for index, device in enumerate(devices))
+    log.info(f"Available devices:\n{_devices}")
 
     user_input = input("Enter the index of the device you want to connect to: ")  # UX
     try:
         index = int(user_input)
-        if index not in range(len(device_list)):
+        if index not in range(len(devices)):
             log.error(
-                f"Index out of range. Please choose the device index within the range [0, {len(device_list) - 1}]"
+                f"Index out of range. Please choose the device index within the range [0, {len(devices) - 1}]"
             )  # UX
             raise DeviceError(f"Invalid index given : {index}")
-        device = device_list[index]
+        device = devices[index]
+        return device
     except ValueError as e:
-        log.error(f"Please provide a valid index within the range [0, {len(device_list) - 1}]")  # UX
+        log.error(f"Please provide a valid index within the range [0, {len(devices) - 1}]")  # UX
         raise DeviceError(e) from e
-
-    return device
 
 
 def disconnect_device() -> None:
-    """Disconnects the currently connected device, if any"""
-    connected_device = OWLITE_SETTINGS.connected_device
-    if connected_device is None:
+    """Disconnect the currently connected device, if any."""
+    connected = OWLITE_DEVICE_SETTINGS.connected
+    if connected is None:
         log.warning("No connected device found")  # UX
         return
-    OWLITE_SETTINGS.connected_device = None
-    log.info(f"Disconnected from the device '{connected_device.name}'")  # UX
+    OWLITE_DEVICE_SETTINGS.connected = None
+    log.info(f"Disconnected from the device '{connected}'")  # UX
 
 
-def connect_free_device() -> Device:
-    """Connects to the free device in NEST device manager.
+def connect_to_first_available_device() -> Device:
+    """Connect to the free device in NEST device manager.
 
     Returns:
         Device: connected device name
     """
-    log.info("Connecting to the free-plan NEST device")  # UX
-    manager = OWLITE_SETTINGS.managers["NEST"]
-    assert manager.url
-    device = Device(name=get_device_list(manager.url)[0], manager=manager)
-    OWLITE_SETTINGS.connected_device = device
+    if OWLITE_DEVICE_SETTINGS.connected:
+        return OWLITE_DEVICE_SETTINGS.connected
+    log.info("Connecting to the first device at NEST")  # UX
+    manager = OWLITE_DEVICE_SETTINGS.managers["NEST"]
+    device = list(manager.devices.values())[0]
+    OWLITE_DEVICE_SETTINGS.connected = device
     return device

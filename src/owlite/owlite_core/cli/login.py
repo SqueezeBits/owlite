@@ -1,4 +1,4 @@
-"""Module for OwLite Authentication
+"""Module for OwLite Authentication.
 
 Includes functions for handling OwLite user authentication.
 """
@@ -21,7 +21,7 @@ def login() -> None:
     """
 
     def _is_valid_email(email: str) -> bool:
-        """Checks if the email is valid.
+        """Check if the email is valid.
 
         Args:
             email (str): A email to check.
@@ -63,7 +63,7 @@ def login() -> None:
         return
 
     resp = _login(email, password)
-    tokens = Tokens(access_token=resp["access_token"], refresh_token=resp["refresh_token"])
+    tokens = Tokens(**resp)
     OWLITE_SETTINGS.tokens = tokens
 
     userinfo = whoami()

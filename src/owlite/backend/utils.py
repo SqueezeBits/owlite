@@ -3,7 +3,7 @@ import json
 from collections import Counter, OrderedDict
 from collections.abc import Iterable
 from numbers import Number
-from typing import Any, Optional, Union
+from typing import Any, Union
 
 import numpy as np
 import onnx_graphsurgeon as gs
@@ -17,7 +17,7 @@ except ImportError:
     import onnx.mapping
 
     # pylint: disable-next=missing-function-docstring
-    def get_numpy_type(onnx_type: Union[int, "TensorProto.DataType", np.dtype]) -> Optional[np.dtype]:
+    def get_numpy_type(onnx_type: Union[int, "TensorProto.DataType", np.dtype]) -> np.dtype | None:
         if not isinstance(onnx_type, int):
             # Already a NumPy type
             return onnx_type
@@ -35,7 +35,7 @@ from torch.fx.node import Target as FXTarget
 
 from ..owlite_core.logger import log
 
-AnyNode = Union[FXNode, ONNXNode, gs.Node]
+AnyNode = FXNode | ONNXNode | gs.Node
 
 RTOL_FP16 = np.finfo(np.float16).smallest_normal.item()
 RTOL_FP32 = 1.0e-5
@@ -44,11 +44,11 @@ ATOL_FP32 = 1.0e-8
 
 
 # pylint:disable = invalid-name
-def nodestr(node: Optional[AnyNode], show_activations: bool = False) -> str:
-    """Generates the string representation of a node instance
+def nodestr(node: AnyNode | None, show_activations: bool = False) -> str:  # type: ignore[valid-type]
+    """Generate the string representation of a node object.
 
     Args:
-        node (Optional[AnyNode]): a node. Must be an instance of one of the types:
+        node (AnyNode | None): a node. Must be an instance of one of the types:
             torch.fx.Node, onnx.NodeProto or gs.Node
         show_activations (bool, optional): Only available if node is either onnx.NodeProto or gs.Node instance. If True,
             the string representation contains the information about the node's input and output activations.
@@ -109,7 +109,7 @@ def nodestr(node: Optional[AnyNode], show_activations: bool = False) -> str:
 
 
 def targetstr(target: FXTarget) -> str:
-    """Generates the string representation of the target of a torch.fx.Node
+    """Generate the string representation of the target of a `torch.fx.Node` object.
 
     Args:
         target (FXTarget): the target of a torch.fx.Node instance.
@@ -124,11 +124,11 @@ def targetstr(target: FXTarget) -> str:
     return f"{target}"
 
 
-def typestr(tensor: Union[torch.Tensor, np.ndarray]) -> str:
-    """Generates the MLIR-like string representation of the type of a torch.Tensor or np.ndarray instance.
+def typestr(tensor: torch.Tensor | np.ndarray) -> str:
+    """Generate the MLIR-like string representation of the type of a torch.Tensor or np.ndarray instance.
 
     Args:
-        tensor (Union[torch.Tensor, np.ndarray]): a tensor or ndarray
+        tensor (torch.Tensor | np.ndarray): a tensor or ndarray
 
     Returns:
         str: the string representation of the type of the tensor
@@ -137,7 +137,7 @@ def typestr(tensor: Union[torch.Tensor, np.ndarray]) -> str:
 
 
 def camel_to_snake(camel_cased_string: str) -> str:
-    """Converts given camelCase string to snake_case string
+    """Convert given camelCase string to snake_case string.
 
     Args:
         camel_cased_string (str): string to convert
@@ -163,7 +163,7 @@ def camel_to_snake(camel_cased_string: str) -> str:
 
 
 def get_most_common_device(model: torch.nn.Module) -> torch.device:
-    """Finds the most common device where the parameters of the model reside.
+    """Find the most common device where the parameters of the model reside.
 
     Args:
         model (torch.nn.Module): a model
@@ -180,7 +180,7 @@ def get_most_common_device(model: torch.nn.Module) -> torch.device:
 
 
 def get_most_common_floating_point_type(model: torch.nn.Module) -> torch.dtype:
-    """Finds the most common floating point data type of the parameters of the model.
+    """Find the most common floating point data type of the parameters of the model.
 
     Args:
         model (torch.nn.Module): a model
@@ -203,15 +203,15 @@ def get_most_common_floating_point_type(model: torch.nn.Module) -> torch.dtype:
 
 def move_tensors_to(
     args: Any,
-    device: Optional[torch.device] = None,
-    dtype: Optional[torch.dtype] = None,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
 ) -> Any:
     """Assign device and dtype to tensors in a nested structure containing torch.Tensor instances.
 
     Args:
         args (Any): a nested structure (dict / list / tuple) of torch.Tensor instances.
-        device (Optional[torch.device], optional): if provided, moves all tensors to the device. Defaults to None.
-        dtype (Optional[torch.dtype], optional): if the dtype is a floating point type, only floating point typed
+        device (torch.device | None, optional): if provided, moves all tensors to the device. Defaults to None.
+        dtype (torch.dtype | None, optional): if the dtype is a floating point type, only floating point typed
             tensors in args will be casted to dtype. The behavior is similar when dtype is a signed integer type
             or unsigned integer type. Defaults to None.
 
@@ -244,21 +244,23 @@ def move_tensors_to(
 def compare_nested_outputs(
     x: Any,
     y: Any,
-    rtol: Optional[float] = None,
-    atol: Optional[float] = None,
+    rtol: float | None = None,
+    atol: float | None = None,
     equal_nan: bool = False,
 ) -> bool:
-    """Checks if two nested structure of values share the same nested structure, and if so,
-        checks if their value pairs are all close.
+    """Compare nested structures for approximate equality.
+
+    Checks if two nested structure of values share the same nested structure,
+    and if so, checks if their value pairs are all close.
 
     Args:
         x (Any): a nested structure (dict / list / tuple) of values
             (one of Number, torch.Tensor or np.ndarray instances).
         y (Any): another nested structure of values.
-        rtol (Optional[float], optional): See the `rtol` parameter in
+        rtol (float | None, optional): See the `rtol` parameter in
             https://numpy.org/doc/stable/reference/generated/numpy.allclose.html. Defaults to RTOL_FP16 if the number
             of bits of both x and y are less then 32, RTOL_FP32 otherwise.
-        atol (Optional[float], optional): See the `atol` parameter in
+        atol (float | None, optional): See the `atol` parameter in
             https://numpy.org/doc/stable/reference/generated/numpy.allclose.html. Defaults to ATOL_FP16 if the number
             of bits of both x and y are less then 32, ATOL_FP32 otherwise.
         equal_nan (bool, optional): Whether to compare NaN's as equal. If True, NaN's in a will be considered equal to
@@ -268,8 +270,8 @@ def compare_nested_outputs(
         bool: True if x and y shares the same nested structure and their tensors are all close, False otherwise.
     """
 
-    def _as_key_value(x: Union[tuple, list, dict, OrderedDict]) -> Iterable[tuple[Any, Any]]:
-        return enumerate(x) if isinstance(x, (tuple, list)) else x.items()
+    def _as_key_value(x: tuple | list | dict | OrderedDict) -> Iterable[tuple[Any, Any]]:
+        return enumerate(x) if isinstance(x, tuple | list) else x.items()
 
     def _as_path(key: Any) -> str:
         if isinstance(key, str):
@@ -284,7 +286,7 @@ def compare_nested_outputs(
             log.warning(f"Output{path} have different types: {lhs.__class__.__name__}  != {rhs.__class__.__name__}")
             return False
 
-        if isinstance(lhs, (tuple, list, dict, OrderedDict)):
+        if isinstance(lhs, tuple | list | dict | OrderedDict):
             if len(lhs) != len(rhs):
                 log.warning(f"Output{path} have different length: {len(lhs)}  != {len(rhs)}")
                 return False
@@ -296,14 +298,14 @@ def compare_nested_outputs(
                 )
             )
 
-        if not isinstance(lhs, (torch.Tensor, np.ndarray, Number)):
+        if not isinstance(lhs, torch.Tensor | np.ndarray | Number):
             log.warning(
                 "Expected nested list/tuple/dict/OrderedDict of torch.Tensor/np.ndarray/Number objects, "
                 f"but found unsupported type {type(lhs)} while parsing nested structure."
             )
             return False
 
-        if isinstance(lhs, (torch.Tensor, np.ndarray)) and lhs.shape != rhs.shape:
+        if isinstance(lhs, torch.Tensor | np.ndarray) and lhs.shape != rhs.shape:
             log.warning(f"Output{path} have different shapes: {typestr(lhs)} != {typestr(rhs)}")
             return False
 
@@ -323,21 +325,21 @@ def compare_nested_outputs(
 
 
 def allclose(
-    a: Union[Number, np.ndarray, torch.Tensor],
-    b: Union[Number, np.ndarray, torch.Tensor],
-    rtol: Optional[float] = None,
-    atol: Optional[float] = None,
+    a: Number | np.ndarray | torch.Tensor,
+    b: Number | np.ndarray | torch.Tensor,
+    rtol: float | None = None,
+    atol: float | None = None,
     equal_nan: bool = False,
 ) -> bool:
-    """checks if values are all close.
+    """Check if values are all close.
 
     Args:
-        a (Union[Number, np.ndarray, torch.Tensor]): a value (one of Number, torch.Tensor or np.ndarray instances)
-        b (Union[Number, np.ndarray, torch.Tensor]): another value
-        rtol (Optional[float], optional): See the `rtol` parameter in
+        a (Number | np.ndarray | torch.Tensor): a value (one of Number, torch.Tensor or np.ndarray instances)
+        b (Number | np.ndarray | torch.Tensor): another value
+        rtol (float | None, optional): See the `rtol` parameter in
             https://numpy.org/doc/stable/reference/generated/numpy.allclose.html. Defaults to RTOL_FP16 if the number
             of bits of both x and y are less then 32, RTOL_FP32 otherwise.
-        atol (Optional[float], optional): See the `atol` parameter in
+        atol (float | None, optional): See the `atol` parameter in
             https://numpy.org/doc/stable/reference/generated/numpy.allclose.html. Defaults to ATOL_FP16 if the number
             of bits of both x and y are less then 32, ATOL_FP32 otherwise.
         equal_nan (bool, optional): Whether to compare NaN's as equal. If True, NaN's in a will be considered equal to
@@ -360,26 +362,26 @@ def allclose(
     return np.allclose(a, b, rtol=rtol, atol=atol, equal_nan=equal_nan)
 
 
-def is_floating_point(dtype: Optional[Union[np.dtype, "TensorProto.DataType"]]) -> bool:
-    """Checks if the dtype is a floating point type
+def is_floating_point(dtype: np.dtype | int | None) -> bool:
+    """Check if the dtype is a floating point type.
 
     Args:
-        dtype (Optional[Union[np.dtype, TensorProto.DataType]]): a dtype
+        dtype (np.dtype | int | None): a numpy data type or an integer as in [onnx.TensorProto.DataType](https://github.com/dmlc/tensorboard/blob/d36e8e921cdd5306c7e2535adbc0fe45be47ceed/tensorboard/src/onnx.proto#L182-L204)
 
     Returns:
         bool: True if the dtype is a floating point type, False otherwise.
     """
     dtype = get_numpy_type(dtype)
-    if dtype is None:
+    if not isinstance(dtype, np.dtype):
         return False
     return np.issubdtype(dtype, np.floating)
 
 
-def convert_to_fp_ndarray(x: Union[Number, np.ndarray, torch.Tensor]) -> np.ndarray:
-    """Converts a value to floating point numpy array
+def convert_to_fp_ndarray(x: Number | np.ndarray | torch.Tensor) -> np.ndarray:
+    """Convert a value to floating point numpy array.
 
     Args:
-        x (Union[Number, np.ndarray, torch.Tensor]): a value (one of Number, torch.Tensor or np.ndarray instance)
+        x (Number | np.ndarray | torch.Tensor): a value (one of Number, torch.Tensor or np.ndarray instance)
 
     Returns:
         np.ndarray: the value converted into numpy array
@@ -396,7 +398,7 @@ def convert_to_fp_ndarray(x: Union[Number, np.ndarray, torch.Tensor]) -> np.ndar
 
 
 def is_onnx_proto_data_external(onnx_proto: ModelProto) -> bool:
-    """Checks if given onnx proto does not contain parameters
+    """Check if given onnx proto does not contain parameters.
 
     Args:
         onnx_proto (ModelProto): onnx proto to check
@@ -409,7 +411,7 @@ def is_onnx_proto_data_external(onnx_proto: ModelProto) -> bool:
 
 
 def normalize_parameter_name(name: str) -> str:
-    """Normalizes the forward method's parameter names that can be possibly renamed by `torch.compile`
+    """Normalize the forward method's parameter names that could possibly be renamed by `torch.compile`.
 
     Args:
         name (str): a possibly modified name

@@ -1,11 +1,11 @@
 # pylint: disable=invalid-name, line-too-long
 # ruff: noqa: E501
+# mypy: disable-error-code=call-arg
 import re
 from collections import defaultdict
-from dataclasses import dataclass
 from enum import Enum, auto
 from functools import cached_property
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import onnx
@@ -17,10 +17,7 @@ from ...options.options_mixin import OptionsMixin
 
 
 class FormalParameterOption(Enum):
-    """
-    A statically analyzable python class for
-    [OpSchema.FormalParameterOption](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L93-L96)
-    """
+    """A statically analyzable python class for [OpSchema.FormalParameterOption](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L93-L96)."""
 
     Single = 0
     Optional = auto()
@@ -28,22 +25,15 @@ class FormalParameterOption(Enum):
 
 
 class DifferentiationCategory(Enum):
-    """
-    A statically analyzable python class for
-    [OpSchema.DifferentiationCategory](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L98-L101)
-    """
+    """A statically analyzable python class for [OpSchema.DifferentiationCategory](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L98-L101)."""
 
     Unknown = 0
     Differentiable = auto()
     NonDifferentiable = auto()
 
 
-@dataclass
 class FormalParameter(OptionsMixin):
-    """
-    A statically analyzable python class for
-    [OpSchema.FormalParameter](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L103-L130)
-    """
+    """A statically analyzable python class for [OpSchema.FormalParameter](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L103-L130)."""
 
     name: str
     type_str: str
@@ -55,22 +45,22 @@ class FormalParameter(OptionsMixin):
 
     @property
     def is_single(self) -> bool:
-        """Equivalent to `self.option == FormalParameterOption.Single`"""
+        """Equivalent to `self.option == FormalParameterOption.Single`."""
         return self.option == FormalParameterOption.Single
 
     @property
     def is_optional(self) -> bool:
-        """Equivalent to `self.option == FormalParameterOption.Optional`"""
+        """Equivalent to `self.option == FormalParameterOption.Optional`."""
         return self.option == FormalParameterOption.Optional
 
     @property
     def is_variadic(self) -> bool:
-        """Equivalent to `self.option == FormalParameterOption.Variadic`"""
+        """Equivalent to `self.option == FormalParameterOption.Variadic`."""
         return self.option == FormalParameterOption.Variadic
 
     @classmethod
     def from_defs(cls, parameter: defs.OpSchema.FormalParameter) -> Self:
-        """Instantiation from the original class in `onnx.defs`"""
+        """Instantiate from the original class in `onnx.defs`."""
         return cls(
             name=parameter.name,
             type_str=parameter.type_str,
@@ -82,9 +72,8 @@ class FormalParameter(OptionsMixin):
         )
 
 
-@dataclass
 class CompiledFormalParameter(OptionsMixin):
-    """The formal parameter compiled for an input or output at a specific index"""
+    """The formal parameter compiled for an input or output at a specific index."""
 
     name: str
     allowed_types: list[np.dtype]
@@ -96,26 +85,22 @@ class CompiledFormalParameter(OptionsMixin):
 
     @property
     def is_single(self) -> bool:
-        """Equivalent to `self.option == FormalParameterOption.Single`"""
+        """Equivalent to `self.option == FormalParameterOption.Single`."""
         return self.option == FormalParameterOption.Single
 
     @property
     def is_optional(self) -> bool:
-        """Equivalent to `self.option == FormalParameterOption.Optional`"""
+        """Equivalent to `self.option == FormalParameterOption.Optional`."""
         return self.option == FormalParameterOption.Optional
 
     @property
     def is_variadic(self) -> bool:
-        """Equivalent to `self.option == FormalParameterOption.Variadic`"""
+        """Equivalent to `self.option == FormalParameterOption.Variadic`."""
         return self.option == FormalParameterOption.Variadic
 
 
-@dataclass
 class TypeConstraintParam(OptionsMixin):
-    """
-    A statically analyzable python class for
-    [OpSchema.TypeConstraintParam](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L72-L91)
-    """
+    """A statically analyzable python class for [OpSchema.TypeConstraintParam](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L72-L91)."""
 
     type_param_str: str
     allowed_type_strs: list[str]
@@ -123,12 +108,12 @@ class TypeConstraintParam(OptionsMixin):
 
     @cached_property
     def allowed_types(self) -> list[np.dtype]:
-        """The allowed types converted into np.dtype instances"""
+        """The allowed types converted into np.dtype instances."""
         return convert_to_np_dtypes(self.allowed_type_strs)
 
     @classmethod
     def from_defs(cls, constraint: defs.OpSchema.TypeConstraintParam) -> Self:
-        """Instantiation from the original class in `onnx.defs`"""
+        """Instantiate from the original class in `onnx.defs`."""
         return cls(
             type_param_str=constraint.type_param_str,
             allowed_type_strs=list(constraint.allowed_type_strs),
@@ -137,17 +122,15 @@ class TypeConstraintParam(OptionsMixin):
 
 
 class TypeConstraintParamMap(OptionsDict[str, TypeConstraintParam]):
-    """
+    """A dictionary mapping a type parameter string to its constraints.
+
     * Key (str): a type parameter string
-    * Value (TypeConstraintParam): the type constraint corresponding to the type parameter string
+    * Value (TypeConstraintParam): the type constraint corresponding to the type parameter string.
     """
 
 
 class AttrType(Enum):
-    """
-    A statically analyzable python class for
-    [AttrType](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L132-L146)
-    """
+    """A statically analyzable python class for [AttrType](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L132-L146)."""
 
     NONE = 0
     FLOAT = auto()
@@ -166,67 +149,62 @@ class AttrType(Enum):
     TYPE_PROTOS = auto()
 
 
-@dataclass
 class AttributeProto(OptionsMixin):
-    """A statically analyzable python class for `onnx.AttributeProto`"""
+    """A statically analyzable python class for `onnx.AttributeProto`."""
 
     name: str
     type: AttrType
     value: Any
 
     @classmethod  # pylint: disable-next=too-many-statements, too-many-return-statements
-    def from_defs(cls, attr_proto: onnx.AttributeProto) -> Optional[Self]:
-        """Instantiation from the original class in `onnx.defs`"""
+    def from_defs(cls, attr_proto: onnx.AttributeProto) -> Self | None:
+        """Instantiate from the original class in `onnx.defs`."""
         attr_type = AttrType(attr_proto.type)
         match attr_type:
             case AttrType.NONE:
                 return None
             case AttrType.FLOAT:
-                return cls(attr_proto.name, attr_type, attr_proto.f)
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.f)
             case AttrType.INT:
-                return cls(attr_proto.name, attr_type, attr_proto.i)
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.i)
             case AttrType.STRING:
-                return cls(attr_proto.name, attr_type, attr_proto.s.decode("UTF-8"))
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.s.decode("UTF-8"))
             case AttrType.TENSOR:
-                return cls(attr_proto.name, attr_type, attr_proto.t)
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.t)
             case AttrType.GRAPH:
-                return cls(attr_proto.name, attr_type, attr_proto.g)
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.g)
             case AttrType.SPARSE_TENSOR:
-                return cls(attr_proto.name, attr_type, attr_proto.sparse_tensor)
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.sparse_tensor)
             case AttrType.TYPE_PROTO:
-                return cls(attr_proto.name, attr_type, attr_proto.tp)
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.tp)
             case AttrType.FLOATS:
-                return cls(attr_proto.name, attr_type, attr_proto.floats)
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.floats)
             case AttrType.INTS:
-                return cls(attr_proto.name, attr_type, attr_proto.ints)
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.ints)
             case AttrType.STRINGS:
-                return cls(attr_proto.name, attr_type, attr_proto.strings)
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.strings)
             case AttrType.TENSORS:
-                return cls(attr_proto.name, attr_type, attr_proto.tensors)
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.tensors)
             case AttrType.GRAPHS:
-                return cls(attr_proto.name, attr_type, attr_proto.graphs)
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.graphs)
             case AttrType.SPARSE_TENSORS:
-                return cls(attr_proto.name, attr_type, attr_proto.sparse_tensors)
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.sparse_tensors)
             case AttrType.TYPE_PROTOS:
-                return cls(attr_proto.name, attr_type, attr_proto.type_protos)
+                return cls(name=attr_proto.name, type=attr_type, value=attr_proto.type_protos)
 
 
-@dataclass
 class Attribute(OptionsMixin):
-    """
-    A statically analyzable python class for
-    [OpSchema.Attribute](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L148-L174)
-    """
+    """A statically analyzable python class for [OpSchema.Attribute](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L148-L174)."""
 
     name: str
     type: AttrType
     description: str
-    default_value: Optional[AttributeProto]
+    default_value: AttributeProto | None
     required: bool
 
     @classmethod
     def from_defs(cls, attribute: defs.OpSchema.Attribute) -> Self:
-        """Instantiation from the original class in `onnx.defs`"""
+        """Instantiate from the original class in `onnx.defs`."""
         return cls(
             name=attribute.name,
             type=AttrType(attribute.type),
@@ -237,18 +215,16 @@ class Attribute(OptionsMixin):
 
 
 class AttributeMap(OptionsDict[str, Attribute]):
-    """
+    """A dictionary mapping the name of an attribute to the attribute.
+
     * Key (str): the name of an attribute
-    * Value (Attribute): the attribute
+    * Value (Attribute): the attribute.
     """
 
 
-@dataclass  # pylint: disable-next=too-many-instance-attributes
+# pylint: disable-next=too-many-instance-attributes
 class OpSchema(OptionsMixin):
-    """
-    A statically analyzable python class for
-    [OpSchema](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L10-L70)
-    """
+    """A statically analyzable python class for [OpSchema](https://github.com/onnx/onnx/blob/v1.15.0/onnx/onnx_cpp2py_export/defs.pyi#L10-L70)."""
 
     name: str
     domain: str
@@ -265,7 +241,7 @@ class OpSchema(OptionsMixin):
 
     @classmethod
     def from_defs(cls, schema: defs.OpSchema) -> Self:
-        """Instantiation from the original class in `onnx.defs`"""
+        """Instantiate from the original class in `onnx.defs`."""
         return cls(
             name=schema.name,
             domain=schema.domain,
@@ -287,7 +263,7 @@ class OpSchema(OptionsMixin):
         )
 
     def i(self, idx: int = 0) -> CompiledFormalParameter:
-        """The formal parameter of the input at given index.
+        """Get the formal parameter of the input at given index.
 
         Args:
             idx (int, optional): the input index. Defaults to 0.
@@ -299,7 +275,7 @@ class OpSchema(OptionsMixin):
         return _get_formal_parameter(idx, self.inputs, self.type_constraints)
 
     def o(self, idx: int = 0) -> CompiledFormalParameter:
-        """The formal parameter of the output at given index.
+        """Get the formal parameter of the output at given index.
 
         Args:
             idx (int, optional): the output index. Defaults to 0.
@@ -341,11 +317,11 @@ def _get_formal_parameter(
 def _get_type_contraints(type_str: str, type_constraints: TypeConstraintParamMap) -> TypeConstraintParam:
     if type_str in type_constraints:
         return type_constraints[type_str]
-    return TypeConstraintParam(type_str, [type_str], description="")
+    return TypeConstraintParam(type_param_str=type_str, allowed_type_strs=[type_str], description="")
 
 
 def convert_to_np_dtypes(wrapped_type_strs: list[str]) -> list[np.dtype]:
-    """Converts type strings from an op schema to numpy data type
+    """Convert type strings from an op schema to numpy data type.
 
     Args:
         wrapped_type_strs (list[str]): the op schema type string
@@ -361,7 +337,7 @@ def convert_to_np_dtypes(wrapped_type_strs: list[str]) -> list[np.dtype]:
 
 
 def unwrap_type_str(type_str: str) -> str:
-    """Unwraps a type string from an op schema if possible
+    """Unwrap a type string from an op schema if possible.
 
     Args:
         type_str (str): an op schema type string
@@ -377,14 +353,14 @@ def unwrap_type_str(type_str: str) -> str:
     return type_str
 
 
-def try_convert_to_np_dtype(type_str: str) -> Optional[np.dtype]:
-    """Converts the type name in string into numpy data type if possible.
+def try_convert_to_np_dtype(type_str: str) -> np.dtype | None:
+    """Convert the type name in string into numpy data type if possible.
 
     Args:
         type_str (str): a string containing type name
 
     Returns:
-        Optional[np.dtype]: a numpy.dtype instance if the conversion was successful, None otherwise.
+        np.dtype | None: a numpy.dtype instance if the conversion was successful, None otherwise.
     """
     if type_str == "float":
         type_str = "float32"
@@ -398,7 +374,7 @@ def try_convert_to_np_dtype(type_str: str) -> Optional[np.dtype]:
 def get_full_operator_schemas() -> (
     list[tuple[str, list[tuple[int, list[tuple[str, defs.OpSchema, list[defs.OpSchema]]]]]]]
 ):
-    """parse full operator schemas
+    """Parse full operator schemas.
 
     Returns:
         list[tuple[str, list[tuple[int, list[tuple[str, defs.OpSchema, list[defs.OpSchema]]]]]]]: nested structure containing all
@@ -435,7 +411,7 @@ def get_full_operator_schemas() -> (
 
 
 def get_core_operator_schemas_defs() -> dict[str, defs.OpSchema]:
-    """restructured operator schemas for only core operators
+    """Restructured operator schemas for only core operators.
 
     Returns:
         dict[str, list[tuple[int, list[tuple[str, defs.OpSchema, list[defs.OpSchema]]]]]]: the dictionary with key-value pairs
@@ -447,7 +423,7 @@ def get_core_operator_schemas_defs() -> dict[str, defs.OpSchema]:
 
 
 def get_core_operator_schemas() -> dict[str, OpSchema]:
-    """restructured operator schemas for only core operators
+    """Restructured operator schemas for only core operators.
 
     Returns:
         dict[str, list[tuple[int, list[tuple[str, defs.OpSchema, list[defs.OpSchema]]]]]]: the dictionary with key-value pairs

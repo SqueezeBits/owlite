@@ -1,5 +1,5 @@
 # pylint: disable=duplicate-code, unused-argument
-from typing import Any, Optional
+from typing import Any
 
 import torch
 from torch import Tensor
@@ -10,10 +10,36 @@ from .fake_quantize import fake_quantize
 
 # mypy: disable-error-code=override
 # pylint: disable-next=abstract-method
-class STEFunction(Function):
+class ScaledRoundSTE(Function):
+    r"""A round function that uses STE backward.
+
+    The input is divided by the scale, rounded up, and multiplied by the scale again.
+    No gradient is propagated through the scale.
+
+    $$
+    \text{output} =  \lfloor \text{input} / \text{scale} \rceil * \text{scale}
+    $$
+
+    """
+
+    @staticmethod  # pylint: disable-next=arguments-differ
+    def forward(ctx: Any, inputs: Tensor, scale: Tensor | float = 1.0) -> Any:
+        rounded_input = (inputs / scale).round()
+        if any(rounded_input > torch.iinfo(torch.int32).max) or any(rounded_input < torch.iinfo(torch.int32).min):
+            raise OverflowError("Rounded input is out of bounds")
+        return rounded_input * scale
+
+    @staticmethod
+    def backward(ctx: Any, *grad_outputs: Any) -> Any:
+        return grad_outputs[0], None
+
+
+# pylint: disable-next=abstract-method
+class FakeQuantizeSTEFunction(Function):
     r"""Fake quantizing function for QAT using STE (Straight-Through Estimator).
 
     For $$ quant\_min $$ <= `input` <= $$ quant\_max $$ the gradient passes straight through,
+    otherwise the gradient is zero
 
     In **STE(Straight Through Estimation)** method, the gradient of the round
     function used in fake quantization is approximated as 1, and
@@ -42,10 +68,8 @@ class STEFunction(Function):
         grad_scale: float,  # grad_scale is not used
         quant_min: int,
         quant_max: int,
-        axis: Optional[int],
-        compensate_zp: bool,  # compensate_zp is not used
+        axis: int | None,
     ) -> Tensor:
-        """grad_scale and compensate_zp are unused arguments in symmetric quantization"""
         ctx.save_for_backward(inputs)
         lower_bound = quant_min * step_size
         upper_bound = quant_max * step_size
@@ -63,4 +87,5 @@ class STEFunction(Function):
         return grad_inputs, None, None, None, None, None, None, None
 
 
-ste_function = STEFunction.apply
+fake_quantize_ste_function = FakeQuantizeSTEFunction.apply
+scaled_round_ste = ScaledRoundSTE.apply

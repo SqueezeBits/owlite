@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import IntEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -6,8 +6,8 @@ if TYPE_CHECKING:
 
 
 # pylint: disable=invalid-name
-class PTQCalibrationType(Enum):
-    """The enum for specifying available Calibrator classes"""
+class PTQCalibrationType(IntEnum):
+    """The enum for specifying available Calibrator classes."""
 
     absmax = 0
     percentile = 1
@@ -17,7 +17,7 @@ class PTQCalibrationType(Enum):
 
     @property
     def calibrator_class(self) -> type["Calibrator"]:
-        """The Calibrator class corresponding to this enum value"""
+        """The Calibrator class corresponding to this enum value."""
         # pylint: disable-next=import-outside-toplevel
         from ..calib import (
             AbsmaxCalibrator,

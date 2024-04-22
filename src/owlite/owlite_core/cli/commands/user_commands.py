@@ -13,7 +13,7 @@ class UserCommands(BaseOwLiteCLICommand):
 
     @staticmethod
     def register_subcommand(parser: _SubParsersAction) -> None:
-        """Registers subcommands for user-related operations.
+        """Register subcommands for user-related operations.
 
         Args:
             parser (_SubParsersAction): The parser object to add subcommands to.
@@ -30,7 +30,7 @@ class BaseUserCommand:
     """Base class for user-related commands."""
 
     def __init__(self, args: Namespace) -> None:
-        """Initializes the BaseUserCommand.
+        """Initialize the BaseUserCommand.
 
         Args:
             args: Arguments passed to the command.
@@ -39,18 +39,18 @@ class BaseUserCommand:
 
 
 class LoginCommand(BaseUserCommand):
-    """Handles the 'login' command."""
+    """Handle the 'login' command."""
 
     def run(self) -> None:
-        """Executes the login operation."""
+        """Execute the login operation."""
         login()
 
 
 class WhoamiCommand(BaseUserCommand):
-    """Handles the 'whoami' command."""
+    """Handle the 'whoami' command."""
 
     def run(self) -> None:
-        """Executes the whoami operation and prints the username."""
+        """Execute the whoami operation and prints the username."""
         userinfo = whoami()
         log.info(userinfo.name)  # UX
         log.info(f"Your price plan: {userinfo.plan.name}")  # UX
@@ -58,8 +58,8 @@ class WhoamiCommand(BaseUserCommand):
 
 
 class LogoutCommand(BaseUserCommand):
-    """Handles the 'logout' command."""
+    """Handle the 'logout' command."""
 
     def run(self) -> None:
-        """Executes the logout operation."""
+        """Execute the logout operation."""
         logout()

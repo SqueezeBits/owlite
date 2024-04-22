@@ -1,10 +1,10 @@
-"""An alternative for torch.onnx.export with extra optimizations"""
+"""An alternative for torch.onnx.export with extra optimizations."""
 # pylint: disable=protected-access
 import io
 import os
 import tempfile
 from collections.abc import Collection, Mapping, Sequence
-from typing import Any, Optional, Union
+from typing import Any
 
 import onnx
 import onnxsim
@@ -18,12 +18,12 @@ from onnx.shape_inference import infer_shapes, infer_shapes_path
 from onnxsim.onnxsim_cpp2py_export import simplify_path
 from torch.fx.graph_module import GraphModule
 
-from ...enums import OwLiteStatus
+from ...enums import ModelStatus
 from ...nn import FakeQuantizer
 from ...nn.functions import clq_function
 from ...options import DynamicAxisOptions
 from ...owlite_core.logger import log
-from ..fx.transforms import clip_narrow_range_weights, fold_zp_to_bias, fuse_bn
+from ..fx.transforms import clip_narrow_range_weights, fuse_bn
 from ..signature import Signature
 from ..utils import (
     get_most_common_device,
@@ -44,32 +44,32 @@ os.environ["ONNXSIM_FIXED_POINT_ITERS"] = "100"
 # pylint: disable-next=too-many-arguments, too-many-locals, invalid-name
 def export(
     module: torch.nn.Module,
-    args: Union[tuple[Any, ...], torch.Tensor],
+    args: tuple[Any, ...] | torch.Tensor,
     f: str,
     export_params: bool = True,
     verbose: bool = False,
     training: torch._C._onnx.TrainingMode = torch._C._onnx.TrainingMode.EVAL,
-    input_names: Optional[Sequence[str]] = None,
-    output_names: Optional[Sequence[str]] = None,
+    input_names: Sequence[str] | None = None,
+    output_names: Sequence[str] | None = None,
     operator_export_type: torch._C._onnx.OperatorExportTypes = torch._C._onnx.OperatorExportTypes.ONNX,
     opset_version: int = 17,
     do_constant_folding: bool = True,
-    keep_initializers_as_inputs: Optional[bool] = None,
-    custom_opsets: Optional[Mapping[str, int]] = None,
-    export_modules_as_functions: Union[bool, Collection[type[torch.nn.Module]]] = False,
+    keep_initializers_as_inputs: bool | None = None,
+    custom_opsets: Mapping[str, int] | None = None,
+    export_modules_as_functions: bool | Collection[type[torch.nn.Module]] = False,
     use_fast_export: bool = True,
     apply_transforms: bool = True,
     simplify: bool = True,
     check_n: int = 1,
     skip_fuse_bn: bool = False,
-    skipped_optimizers: Optional[list[str]] = None,
-    dynamic_axis_options: Optional[Union[DynamicAxisOptions, dict[str, dict[str, int]]]] = None,
+    skipped_optimizers: list[str] | None = None,
+    dynamic_axis_options: DynamicAxisOptions | None = None,
 ) -> None:
-    r"""Exports a model into ONNX format.
+    r"""Export a module into ONNX format.
 
     Args:
         module (torch.nn.Module): The model to be exported.
-        args (Union[tuple[Any, ...], torch.Tensor]): Argument of a `module`.
+        args (tuple[Any, ...] | torch.Tensor): Argument of a `module`.
 
             args can be structured either as:
 
@@ -145,9 +145,9 @@ def export(
                 False and in training mode if model.training is True.
             * `TrainingMode.TRAINING`: export the model in training mode. Disables optimizations
                 which might interfere with training.
-        input_names (Optional[Sequence[str]], optional): Names to assign to the input nodes of the graph, in order.
+        input_names (Sequence[str] | None, optional): Names to assign to the input nodes of the graph, in order.
             Names of `module.forward` arguments will be used when None is given. Defaults to None.
-        output_names (Optional[Sequence[str]], optional): Names to assign to the output nodes of the graph, in order.
+        output_names (Sequence[str] | None, optional): Names to assign to the output nodes of the graph, in order.
             Defaults to None.
         operator_export_type (torch._C._onnx.OperatorExportTypes, optional):
             Defaults to `torch._C._onnx.OperatorExportTypes.ONNX`.
@@ -210,12 +210,12 @@ def export(
         do_constant_folding (bool, optional): Apply the constant-folding optimization.
             Constant-folding will replace some of the ops that have all constant inputs
             with pre-computed constant nodes. Defaults to True.
-        keep_initializers_as_inputs (Optional[bool], optional): If True, all the initializers
+        keep_initializers_as_inputs (bool | None, optional): If True, all the initializers
             (typically corresponding to parameters) in the exported graph will also be added
             as inputs to the graph. If False, then initializers are not added as inputs to the
             graph, and only the non-parameter inputs are added as inputs. This may allow for
             better optimizations (e.g. constant folding) by backends/runtimes. Defaults to None.
-        custom_opsets (Optional[Mapping[str, int]], optional): A dict with schema:
+        custom_opsets (Mapping[str, int] | None, optional): A dict with schema:
 
             * KEY (str): opset domain name
             * VALUE (int): opset version
@@ -223,7 +223,7 @@ def export(
             If a custom opset is referenced by ``model`` but not mentioned in this dictionary,
             the opset version is set to 1. Only custom opset domain name and version should be
             indicated through this argument. Defaults to None.
-        export_modules_as_functions (Union[bool, Collection[type[torch.nn.Module]]], optional): Flag to enable
+        export_modules_as_functions (bool | Collection[type[torch.nn.Module]], optional): Flag to enable
             exporting all ``nn.Module`` forward calls as local functions in ONNX. Or a set to indicate the
             particular types of modules to export as local functions in ONNX.
             This feature requires ``opset_version`` >= 15, otherwise the export will fail. This is because
@@ -242,11 +242,11 @@ def export(
             simplified ONNX proto after onnx-simplifier. Defaults to 1.
         skip_fuse_bn (bool, optional): Only available when `simplify=True`. Whether to skip batchnorm-fusion.
             Defaults to False.
-        skipped_optimizers (Optional[list[str]], optional): Only available when `simplify=True`. The list of
+        skipped_optimizers (list[str] | None, optional): Only available when `simplify=True`. The list of
             onnx-simplifier passes to skip. Defaults to None.
             See https://github.com/onnx/optimizer/tree/master/onnxoptimizer/passes for available passes.
-        dynamic_axis_options (Optional[Union[DynamicAxisOptions, dict[str, dict[str, int]]]], optional):
-            A `DynamicAxisOptions` object indicating which input tensor(s) should be configured with a dynamic axis.
+        dynamic_axis_options (DynamicAxisOptions | None, optional): A `DynamicAxisOptions` object indicating
+            which input tensor(s) should be configured with a dynamic axis.
             Defaults to None.
 
     Raises:
@@ -258,12 +258,11 @@ def export(
         `torch.onnx.errors.OnnxExporterError`: Other errors that can occur during export.
             All errors are subclasses of :class:`errors.OnnxExporterError`.
     """
-
     if not isinstance(f, str):
         raise TypeError("owlite.onnx.export requires the argument `f` to be a string.")
 
     if isinstance(module, GraphModule):
-        if module.meta["owlite_status"] == OwLiteStatus.COMPRESSED:
+        if module.meta.get("status") == ModelStatus.COMPRESSED:
             log.warning(
                 "This module has not yet been calibrated. "
                 "The onnx that comes out of this module may have unexpected results in accuracy and latency."
@@ -271,10 +270,8 @@ def export(
 
         clip_narrow_range_weights(module)
         # Batch Norm Fusing
-        fuse_bn(module)
-
-        # zero point folding
-        fold_zp_to_bias(module)
+        if not skip_fuse_bn:
+            fuse_bn(module)
 
         check_fake_quantization_condition(module)
 
@@ -327,8 +324,6 @@ def export(
     )
 
     if dynamic_axis_options is not None:
-        if isinstance(dynamic_axis_options, dict):
-            dynamic_axis_options = DynamicAxisOptions(dynamic_axis_options)
         onnx_proto = dynamize(onnx_proto, dynamic_axis_options)
 
     onnx_proto.producer_name = f"owlite + {onnx_proto.producer_name}"
@@ -353,18 +348,18 @@ def export(
 # pylint: disable=missing-function-docstring, broad-exception-caught
 def _export(
     module: torch.nn.Module,
-    args: Union[tuple[Any, ...], torch.Tensor],
+    args: tuple[Any, ...] | torch.Tensor,
     export_params: bool = True,
     verbose: bool = False,
     training: torch._C._onnx.TrainingMode = torch._C._onnx.TrainingMode.EVAL,
-    input_names: Optional[Sequence[str]] = None,
-    output_names: Optional[Sequence[str]] = None,
+    input_names: Sequence[str] | None = None,
+    output_names: Sequence[str] | None = None,
     operator_export_type: torch._C._onnx.OperatorExportTypes = torch._C._onnx.OperatorExportTypes.ONNX,
-    opset_version: Optional[int] = None,
+    opset_version: int | None = None,
     do_constant_folding: bool = True,
-    keep_initializers_as_inputs: Optional[bool] = None,
-    custom_opsets: Optional[Mapping[str, int]] = None,
-    export_modules_as_functions: Union[bool, Collection[type[torch.nn.Module]]] = False,
+    keep_initializers_as_inputs: bool | None = None,
+    custom_opsets: Mapping[str, int] | None = None,
+    export_modules_as_functions: bool | Collection[type[torch.nn.Module]] = False,
 ) -> ModelProto:
     with io.BytesIO() as f:
         log.debug("Running torch.onnx.export")
@@ -391,18 +386,18 @@ def _export(
 
 def _export_path(
     module: torch.nn.Module,
-    args: Union[tuple[Any, ...], torch.Tensor],
+    args: tuple[Any, ...] | torch.Tensor,
     export_params: bool = True,
     verbose: bool = False,
     training: torch._C._onnx.TrainingMode = torch._C._onnx.TrainingMode.EVAL,
-    input_names: Optional[Sequence[str]] = None,
-    output_names: Optional[Sequence[str]] = None,
+    input_names: Sequence[str] | None = None,
+    output_names: Sequence[str] | None = None,
     operator_export_type: torch._C._onnx.OperatorExportTypes = torch._C._onnx.OperatorExportTypes.ONNX,
-    opset_version: Optional[int] = None,
+    opset_version: int | None = None,
     do_constant_folding: bool = True,
-    keep_initializers_as_inputs: Optional[bool] = None,
-    custom_opsets: Optional[Mapping[str, int]] = None,
-    export_modules_as_functions: Union[bool, Collection[type[torch.nn.Module]]] = False,
+    keep_initializers_as_inputs: bool | None = None,
+    custom_opsets: Mapping[str, int] | None = None,
+    export_modules_as_functions: bool | Collection[type[torch.nn.Module]] = False,
 ) -> ModelProto:
     with tempfile.TemporaryDirectory() as tempdir:
         model_path = os.path.join(tempdir, "model.onnx")
@@ -435,7 +430,7 @@ def _optimize(
     simplify: bool = True,
     check_n: int = 1,
     skip_fuse_bn: bool = False,
-    skipped_optimizers: Optional[list[str]] = None,
+    skipped_optimizers: list[str] | None = None,
 ) -> ModelProto:
     modified_proto = onnx_proto
     try:
@@ -473,7 +468,7 @@ def _optimize_path(
     simplify: bool = True,
     check_n: int = 1,
     skip_fuse_bn: bool = False,
-    skipped_optimizers: Optional[list[str]] = None,
+    skipped_optimizers: list[str] | None = None,
 ) -> ModelProto:
     with tempfile.TemporaryDirectory() as tempdir:
         output_path = os.path.join(tempdir, "model.onnx")
@@ -544,11 +539,8 @@ def name_anonymous_nodes(onnx_proto: ModelProto) -> ModelProto:
     return onnx_proto
 
 
-def get_default_input_names(
-    module: torch.nn.Module, onnx_export_args: Union[tuple[Any, ...], torch.Tensor]
-) -> list[str]:
-    """Decides the default value of `input_names` parameter for `olt.onnx.export` based on the signature of the module's
-    forward method and the onnx_export_args.
+def get_default_input_names(module: torch.nn.Module, onnx_export_args: tuple[Any, ...] | torch.Tensor) -> list[str]:
+    """Generate the default value for the `input_names` parameter of `owlite.onnx.export`.
 
     Args:
         module (torch.nn.Module): the module to be passed to `olt.onnx.export`
@@ -570,7 +562,7 @@ def get_default_input_names(
         else:
             args, kwargs = onnx_export_args, {}
     input_shape_signature = Signature.from_module(module, args, kwargs)
-    return [*(pair[0] for pair in input_shape_signature)]
+    return list(input_shape_signature.keys())
 
 
 def check_fake_quantization_condition(model: GraphModule) -> bool:
@@ -603,4 +595,11 @@ def check_fake_quantization_condition(model: GraphModule) -> bool:
             # check symmetry
             if module.symmetric and module.zero_point.amax() > 0:
                 raise ValueError(f"({name}) : The zero point of symmetric quantization is not 0.")
+
+            if module.zero_point.min() < module.quant_min or module.zero_point.max() > module.quant_max:
+                log.error(
+                    f"({name}) : The zeropoint should be within the range ({module.quant_min, module.quant_max}).\n"
+                    f"{module}\nzero_point:{module.zero_point.data}"
+                )
+                raise ValueError("The zero point is out of range")
     return True

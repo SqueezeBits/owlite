@@ -1,5 +1,4 @@
 import inspect
-from typing import Optional
 
 import torch
 from torch.fx.graph import Graph, Node
@@ -10,7 +9,7 @@ from .types import TorchTarget
 
 
 def find_placeholders(graph: Graph) -> list[Node]:
-    """Finds all placeholder nodes
+    """Find all placeholder nodes.
 
     Args:
         graph (Graph): the input graph
@@ -22,7 +21,7 @@ def find_placeholders(graph: Graph) -> list[Node]:
 
 
 def find_the_output_node(graph: Graph) -> Node:
-    """Finds the unique output node in the graph.
+    """Find the unique output node in the graph.
 
     Args:
         graph (Graph): the input graph
@@ -44,7 +43,7 @@ def find_the_output_node(graph: Graph) -> Node:
 
 
 def find_constant_nodes(graph: Graph) -> list[Node]:
-    """Finds all constant-foldable nodes in the graph.
+    """Find all constant-foldable nodes in the graph.
 
     Args:
         graph (Graph): the input graph
@@ -85,7 +84,7 @@ def find_constant_nodes(graph: Graph) -> list[Node]:
 
 
 def is_output_adapter_node(node: Node) -> bool:
-    """check node is output adapter node
+    """Check if the node is an output adapter node.
 
     Args:
         node: torch.fx.Node. Node to be checked
@@ -100,25 +99,25 @@ def is_output_adapter_node(node: Node) -> bool:
     )
 
 
-def get_target_module(node: Node) -> Optional[torch.nn.Module]:
-    """Finds the module the node is targeting only when the node is a proper "call_module" node.
+def get_target_module(node: Node) -> torch.nn.Module | None:
+    """Find the module the node is targeting only when the node is a proper "call_module" node.
 
     Args:
         node (FXNode): a node.
 
     Returns:
-        Optional[torch.nn.Module]: the module that the node is pointing to if
-            * its op is "call_module"; and
+        torch.nn.Module | None: the module that the node is pointing to if
+            * its op is `"call_module"`; and
             * its target is a string; and
             * it belongs to a GraphModule instance
-            Otherwise, None is returned
+            Otherwise, `None` is returned
     """
     if node.op != "call_module" or not isinstance(node.target, str):
         return None
     graph_module = node.graph.owning_module
     if graph_module is None:
         return None
-    module: Optional[torch.nn.Module] = None
+    module: torch.nn.Module | None = None
     try:
         module = graph_module.get_submodule(node.target)
     except AttributeError as e:
@@ -127,16 +126,18 @@ def get_target_module(node: Node) -> Optional[torch.nn.Module]:
     return module
 
 
-def get_torch_target(node: Node) -> Optional[TorchTarget]:
-    """
+def get_torch_target(node: Node) -> TorchTarget | None:
+    """Get the PyTorch target module or function of the node.
+
     Args:
-        node (Node): a node
+        node (Node): a node.
 
     Returns:
-        Optional[TorchTarget]:
-            * if node.op is "call_module", returns the class of module instance it is targeting.
-            * if node.op is either "call_function" or "call_method" and its target is from torch, returns `node.target`
-            * otherwise, returns None
+        TorchTarget | None:
+            * If `node.op` is `"call_module"`, returns the class of module instance it is targeting.
+            * If `node.op` is either `"call_function"` or `"call_method"` and its target is from torch,
+            returns `node.target`
+            * Otherwise, returns `None`
     """
     target_module = get_target_module(node)
     if target_module is not None:

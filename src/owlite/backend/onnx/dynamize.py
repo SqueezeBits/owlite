@@ -3,7 +3,6 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import reduce
-from typing import Union
 
 import numpy as np
 import onnx_graphsurgeon as gs
@@ -20,7 +19,7 @@ def dynamize(onnx_proto: ModelProto, options: DynamicAxisOptions) -> ModelProto:
 
     Args:
         onnx_proto (ModelProto): ONNX model proto to dynamize.
-        dynamic_dims (DynamicAxisOptions): Dynamic axis setting.
+        options (DynamicAxisOptions): Dynamic axis setting.
 
     Raises:
         ValueError: When dynamic ONNX proto is given.
@@ -30,7 +29,6 @@ def dynamize(onnx_proto: ModelProto, options: DynamicAxisOptions) -> ModelProto:
     Returns:
         ModelProto: Dynamized ONNX proto.
     """
-
     graph = gs.import_onnx(onnx_proto)
     input_signature = Signature.from_onnx(graph)
 
@@ -42,11 +40,10 @@ def dynamize(onnx_proto: ModelProto, options: DynamicAxisOptions) -> ModelProto:
     for input_tensor in graph.inputs:
         if not isinstance(input_tensor, gs.Variable) or input_tensor.shape is None:
             continue
-        axis_options = options.get(input_tensor.name)
-        if axis_options is None:
+        dynamic_axis = options.get(input_tensor.name, None)
+        if dynamic_axis is None:
             continue
 
-        dynamic_axis = axis_options.axis
         shape = tuple(-1 if isinstance(s, str) else s for s in input_tensor.shape)
         input_tensor.shape = tuple("N" if i == dynamic_axis else s for i, s in enumerate(input_tensor.shape))
         propagate_dynamic_shape(input_tensor, shape, dynamic_axis)
@@ -81,11 +78,11 @@ def remove_neg_ones_from_reshape_ops(graph: gs.Graph) -> None:
 
 @dataclass
 class DynamicAxisPropagator:
-    """The object holding information for propagating dynamic axis"""
+    """The object holding information for propagating dynamic axis."""
 
     dynamic_axis: int
     original_size: int
-    shape: tuple[Union[int, str], ...]
+    shape: tuple[int | str, ...]
     node: gs.Node
 
 

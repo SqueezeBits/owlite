@@ -8,8 +8,7 @@ from ..owlite_core.logger import log
 
 
 def upload_file_to_url(file_path: str, dst_url: str) -> None:
-    """
-    Upload file to destination URL via http request.
+    """Upload file to destination URL via http request.
 
     Args:
         file_path (str): path to file
@@ -44,9 +43,9 @@ def upload_file_to_url(file_path: str, dst_url: str) -> None:
 
 
 def download_file_from_url(file_url: str, path_to_save: str) -> None:
-    """
-    Download file from URL via http request, note that this function will overwrite a file with
-    downloaded file content if a file already exists at given path.
+    """Download file from URL via http request.
+
+    Note that this function will overwrite a file with downloaded file content if a file already exists at given path.
 
     Args:
         file_url: URL of a file to download

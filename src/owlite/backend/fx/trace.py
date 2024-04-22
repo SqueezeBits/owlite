@@ -4,8 +4,8 @@ import logging
 import sys
 import traceback
 from collections import OrderedDict
-from collections.abc import Iterable, Sequence
-from typing import Any, Callable, Optional, Union
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any, Literal
 
 import torch
 import torch._dynamo as torch_dynamo
@@ -14,7 +14,7 @@ from torch.fx import Node
 from torch.fx.graph_module import GraphModule, _WrappedCall
 from torch.nn.parallel import DataParallel, DistributedDataParallel
 
-from ...enums import OwLiteStatus, ParamStatus
+from ...enums import ModelStatus
 from ...owlite_core.logger import log
 from ..config import FORCE_OUTPUT_COMPATIBILITY
 from ..signature import map_signature
@@ -26,11 +26,13 @@ from ..utils import (
 from .node import find_the_output_node
 from .transforms import apply_graph_module_transforms
 
+ForwardParamStatus = Literal["alive", "kept", "purged"]
+
 
 # pylint: disable-next=missing-class-docstring, too-few-public-methods
 class BackendProvider:
     def __init__(self) -> None:
-        self.graph_module: Optional[GraphModule] = None
+        self.graph_module: GraphModule | None = None
 
     def __call__(self, graph_module: GraphModule, inputs: Sequence[Tensor]) -> Callable[..., Tensor]:
         self.graph_module = graph_module
@@ -43,7 +45,7 @@ class TensorPlaceholder:
 
 
 def extract_structure(nested_tensor: Any) -> Any:
-    """Extracts nested structure of given nested tensor.
+    """Extract nested structure of given nested tensor.
 
     Args:
         nested_tensor (Any): Tensor nested in arbitrary data structure.
@@ -73,28 +75,27 @@ def extract_structure(nested_tensor: Any) -> Any:
     return _extract_structure(nested_tensor)
 
 
-def flatten_output(output: Union[Iterable, Tensor, Node]) -> list[Union[Tensor, Node]]:
-    """Flattens the output of `nn.Module` or the argument of fx output node.
+def flatten_output(output: Iterable | Tensor | Node) -> list[Tensor | Node]:
+    """Flatten the output of `nn.Module` or the argument of fx output node.
 
     Args:
-        output (Union[Iterable, Tensor, Node]): The output to flatten.
+        output (Iterable | Tensor | Node): The output to flatten.
 
     Returns:
-        list[Union[Tensor, Node]]: The flattened output.
+        list[Tensor | Node]: The flattened output.
 
     Notes:
         This function assumes all nodes passed as an argument to fx output node produces
         `Tensor` and the orderings of the outputs are preserved during `torch.compile`.
     """
+    flattened_output: list[Tensor | Node] = []
 
-    flattened_output: list[Union[Tensor, Node]] = []
-
-    def _extract_output(output: Union[Iterable, Tensor, Node]) -> None:
+    def _extract_output(output: Iterable | Tensor | Node) -> None:
         if isinstance(output, Tensor):
             flattened_output.append(output)
         elif isinstance(output, Node):
             flattened_output.append(output)
-        elif isinstance(output, (dict, OrderedDict)):
+        elif isinstance(output, dict | OrderedDict):
             for out in output.values():
                 _extract_output(out)
         elif isinstance(output, Iterable):
@@ -107,16 +108,15 @@ def flatten_output(output: Union[Iterable, Tensor, Node]) -> list[Union[Tensor, 
 
 
 def filter_output(graph_module_output: Any, original_output: Any) -> list[Node]:
-    """Filters `graph_module_output`.
+    """Filter the output of the graph module converted by `torch.compile` by the output from the original module.
 
     Args:
         graph_module_output (Any): The argument of fx output node to filter.
-        original_output (Any): The output of an original model before `torch.compile`.
+        original_output (Any): The output of the original module before `torch.compile`.
 
     Returns:
         Any: The filtered and flattened output.
     """
-
     flattened_graph_module_output = flatten_output(graph_module_output)
     flattened_original_output = flatten_output(original_output)
 
@@ -179,17 +179,15 @@ def create_output_adapter(output_structure: Any) -> Callable[[Any], Any]:
 
 # pylint: disable-next=missing-function-docstring
 def patched_wrapped_call(self: Any, obj: GraphModule, *_args: Any, **_kwargs: Any) -> Any:
-    param_status: dict[str, ParamStatus] = obj.meta.get("param_status", None)
+    param_status: dict[str, ForwardParamStatus] = obj.meta.get("param_status", None)
 
     if param_status:
-        ignored_keys = [name for name, status in param_status.items() if status != ParamStatus.ALIVE]
+        ignored_keys = [name for name, status in param_status.items() if status != "alive"]
         kwargs = {key: arg for key, arg in _kwargs.items() if key not in ignored_keys}
 
-        kept_names = [name for name, status in param_status.items() if status != ParamStatus.PURGED]
+        kept_names = [name for name, status in param_status.items() if status != "purged"]
         args = tuple(
-            a
-            for i, a in enumerate(_args)
-            if i < len(kept_names) and param_status.get(kept_names[i]) == ParamStatus.ALIVE
+            a for i, a in enumerate(_args) if i < len(kept_names) and param_status.get(kept_names[i]) == "alive"
         )
         if log.level <= logging.DEBUG:
             log.debug(
@@ -197,7 +195,7 @@ def patched_wrapped_call(self: Any, obj: GraphModule, *_args: Any, **_kwargs: An
                 f"({[key for key in ignored_keys if key in _kwargs]})"
             )
             dropped_indices = tuple(
-                i for i in range(len(_args)) if i < len(kept_names) and param_status[kept_names[i]] != ParamStatus.ALIVE
+                i for i in range(len(_args)) if i < len(kept_names) and param_status[kept_names[i]] != "alive"
             )
             log.debug(f"{len(_args) - len(args)} out of {len(_args)} args dropped. ({dropped_indices})")
     else:
@@ -228,11 +226,14 @@ _WrappedCall.__call__ = patched_wrapped_call  # type: ignore[method-assign]
 
 
 def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphModule:
-    """Like `torch.fx.symbolic_trace`, this function traces the input `model` to convert it into a GraphModule.
+    """Symbolically trace the input `model` to convert it into a GraphModule.
+
     In order for the tracing to be successful, the `model` must be able to pass `torch.compile(model, fullgraph=True)`.
 
     Args:
         model (torch.nn.Module): a torch.nn.Module instance.
+        *args: the example input(s) that would be passed to the model's forward method.
+        **kwargs: the example input(s) that would be passed to the model's forward method.
 
     Raises:
         TypeError: if the `model` is not an instance of `torch.nn.Module`
@@ -243,7 +244,7 @@ def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphMo
     """
     if not isinstance(model, torch.nn.Module):
         raise TypeError(f"Expected torch.nn.Module instance but object of type {type(model)} given: {model}")
-    if isinstance(model, (DataParallel, DistributedDataParallel)):
+    if isinstance(model, DataParallel | DistributedDataParallel):
         _model_type = f"torch.nn.parallel.{type(model).__name__}"
         log.error(
             f"{_model_type} is not supported by symbolic trace, please use 'attribute' module to unwrap model "
@@ -295,7 +296,7 @@ def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphMo
 
     graph_module = apply_graph_module_transforms(graph_module, args, kwargs)
     graph_module.train(training_status)
-    graph_module.meta["owlite_status"] = OwLiteStatus.NOT_COMPRESSED
+    graph_module.meta["status"] = ModelStatus.TRACED
 
     graph_module_params = {**inspect.signature(graph_module.forward).parameters}
     log.debug(f"original_params: {[*original_params.keys()]}")
@@ -317,17 +318,13 @@ def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphMo
         for name, val in received_values.items():
             log.debug(f"{name}: {'empty' if val is inspect._empty else 'received'}")
 
-    param_status = {
-        name: (
-            ParamStatus.ALIVE
-            if name in graph_module_params
-            else (ParamStatus.KEPT if name in received_values else ParamStatus.PURGED)
-        )
+    param_status: dict[str, ForwardParamStatus] = {
+        name: ("alive" if name in graph_module_params else ("kept" if name in received_values else "purged"))
         for name in original_params
     }
     if log.level <= logging.DEBUG:
         for name, status in param_status.items():
-            log.debug(f"{name}: {status.name}")
+            log.debug(f"{name}: {status}")
 
     graph_module.meta["param_status"] = param_status
 
@@ -347,17 +344,17 @@ def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphMo
         def strikethrough(s: str) -> str:
             return "\u0336".join((*s, ""))
 
-        def as_snippet(param: inspect.Parameter, status: ParamStatus) -> str:
+        def as_snippet(param: inspect.Parameter, status: ForwardParamStatus) -> str:
             default_exists = has_default(param)
             snippet = f"{param.name}={param.default}" if default_exists else param.name
-            comment: Optional[str] = None
+            comment: str | None = None
             match status, default_exists:
-                case ParamStatus.ALIVE, _:
+                case "alive", _:
                     pass
-                case ParamStatus.KEPT, False:
+                case "kept", False:
                     snippet = yellow(snippet)
                     comment = f"will be ignored but {red('required')}"
-                case (ParamStatus.PURGED, _) | (ParamStatus.KEPT, True):
+                case ("purged", _) | ("kept", True):
                     snippet = red(strikethrough(snippet))
                     comment = "will be ignored and optional"
             snippet = f"{indent8}{snippet},"
@@ -365,8 +362,8 @@ def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphMo
                 snippet += f"  # <--- {comment}"
             return snippet
 
-        def is_required(param: inspect.Parameter, status: ParamStatus) -> bool:
-            return has_default(param) and status == ParamStatus.KEPT
+        def is_required(param: inspect.Parameter, status: ForwardParamStatus) -> bool:
+            return has_default(param) and status == "kept"
 
         def has_default(param: inspect.Parameter) -> bool:
             return param.default is not inspect._empty
@@ -386,7 +383,7 @@ def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphMo
             f"{code_snippet}"
         )
 
-    if not all(status == ParamStatus.ALIVE for status in param_status.values()):
+    if not all(status == "alive" for status in param_status.values()):
         warn_dropped_inputs()
 
     return graph_module

@@ -1,24 +1,23 @@
-"""API wrapper module for login"""
-
-from dataclasses import dataclass
+"""API wrapper module for login."""
 
 import requests
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
+from ....enums.price_plan import PricePlan
 from ...api_base import APIBase
-from ...api_enums import PricePlan
 from ...constants import OWLITE_API_DEFAULT_TIMEOUT
 from ...exceptions import LoginError
 from ...logger import log
 from ...owlite_settings import OWLITE_SETTINGS
 
 
-@dataclass
-class UserInfo:
-    """User Information"""
+class UserInfo(BaseModel):
+    """User Information."""
 
-    name: str
-    plan: PricePlan
-    workgroup: str
+    model_config = ConfigDict(extra="ignore")
+    name: str = Field(validation_alias=AliasChoices("name", "username"))
+    plan: PricePlan = Field(validation_alias=AliasChoices("plan", "tier"))
+    workgroup: str = Field(validation_alias=AliasChoices("workgroup", "workgroup_name"))
 
 
 def login(email: str, password: str) -> dict[str, str]:
@@ -83,6 +82,6 @@ def whoami() -> UserInfo:
         raise e
     assert isinstance(resp, dict)
     log.debug(f"whoami response: {resp}")
-    user_info = UserInfo(name=str(resp["username"]), plan=PricePlan(resp["tier"]), workgroup=resp["workgroup_name"])
+    user_info = UserInfo.model_validate(resp)
     log.debug(f"user info: {user_info.name}, {user_info.plan}, {user_info.workgroup}")
     return user_info

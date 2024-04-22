@@ -1,7 +1,8 @@
 import os
 from collections import Counter, OrderedDict
-from enum import Enum
-from typing import Any, Callable, Optional, Union, cast
+from collections.abc import Callable
+from enum import IntEnum
+from typing import Any, cast
 
 import numpy as np
 import onnx
@@ -17,16 +18,16 @@ from .onnx_op import ONNXOp
 
 OnnxTransform = Callable[[gs.Graph], gs.Graph]
 ONNX_TRANSFORMS: dict[str, OnnxTransform] = {}
-Tensor = Union[gs.Constant, gs.Variable]
 
 
-def apply_onnx_transforms(onnx_proto: ModelProto, output_path: Optional[str] = None, **kwargs: Any) -> ModelProto:
-    """Applies all transformations registered in this file.
+def apply_onnx_transforms(onnx_proto: ModelProto, output_path: str | None = None, **kwargs: Any) -> ModelProto:
+    """Apply all transformations registered in this file.
 
     Args:
         onnx_proto (ModelProto): the ONNX model proto to apply transformations.
-        output_path (Optional[str], optional): the output path in string. If provided, runs the ModelProto will be
+        output_path (str | None, optional): the output path in string. If provided, runs the ModelProto will be
             written with external data after the transformations (required for large models > 2GB). Defaults to None.
+        **kwargs: keyword arguments to invoke `export_with_external_data` with.
 
     Returns:
         ModelProto: the transformed ONNX model proto.
@@ -45,7 +46,7 @@ def apply_onnx_transforms(onnx_proto: ModelProto, output_path: Optional[str] = N
 
 
 def register_onnx_transform(transform: OnnxTransform) -> OnnxTransform:
-    """Registers a ONNX transform globally. Note that the registration order matters.
+    """Register a ONNX transform globally. Note that the registration order matters.
 
     Use this function as a decorator to register your custom ONNX transform. For example:
     @register_onnx_transform
@@ -61,8 +62,9 @@ def register_onnx_transform(transform: OnnxTransform) -> OnnxTransform:
 
 @register_onnx_transform
 def fold_trilu_constants(graph: gs.Graph) -> gs.Graph:
-    """Folds Trilu ops if constant-foldable. Note that this transformation is a workaround for the missing support for
-    the Trilu op in onnx-runtime
+    """Fold Trilu ops if constant-foldable.
+
+    Note that this transformation is a workaround for the missing support for the Trilu op in onnx-runtime.
 
     Args:
         graph (gs.Graph): a ONNX graph.
@@ -110,7 +112,7 @@ def fold_trilu_constants(graph: gs.Graph) -> gs.Graph:
 
 @register_onnx_transform
 def eliminate_nop_dropouts(graph: gs.Graph) -> gs.Graph:
-    """Eliminates all Dropout ops with no effect.
+    """Eliminate all Dropout ops with no effect.
 
     Args:
         graph (gs.Graph): a ONNX graph.
@@ -128,7 +130,7 @@ def eliminate_nop_dropouts(graph: gs.Graph) -> gs.Graph:
 
 @register_onnx_transform
 def eliminate_nop_casts(graph: gs.Graph) -> gs.Graph:
-    """Eliminates all Cast ops with no effect.
+    """Eliminate all Cast ops with no effect.
 
     Args:
         graph (gs.Graph): a ONNX graph.
@@ -146,7 +148,7 @@ def eliminate_nop_casts(graph: gs.Graph) -> gs.Graph:
 
 @register_onnx_transform
 def synchronize_floating_point_types(graph: gs.Graph) -> gs.Graph:
-    """Synchronizes all floating points types used in the graph as the most common one.
+    """Synchronize all floating points types used in the graph as the most common one.
 
     Args:
         graph (gs.Graph): a ONNX graph.
@@ -162,8 +164,8 @@ def synchronize_floating_point_types(graph: gs.Graph) -> gs.Graph:
         log.debug("No tensor with floating point type found in the graph")
         return graph
 
-    class FloatingPointSyncType(Enum):
-        """How to synchronize the floating point types within a model"""
+    class FloatingPointSyncType(IntEnum):
+        """How to synchronize the floating point types within a model."""
 
         FP32 = 0
         FP16 = 1
@@ -213,10 +215,9 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
     Returns:
         gs.Graph: the transformed ONNX graph
     """
-
     # pylint: disable=too-many-statements
 
-    def _get_constant_or_none(tensor: Tensor) -> Optional[gs.Constant]:
+    def _get_constant_or_none(tensor: gs.Constant | gs.Variable) -> gs.Constant | None:
         if isinstance(tensor, gs.Constant):
             return tensor
 
@@ -233,7 +234,7 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
 
     def _get_constant_conv_params(
         conv_node: gs.Node,
-    ) -> Optional[tuple[gs.Constant, Optional[gs.Constant], Optional[gs.Constant]]]:
+    ) -> tuple[gs.Constant, gs.Constant | None, gs.Constant | None] | None:
         if conv_node.op != "Conv":
             raise ValueError(f"Expected a `Conv` operation but received `{conv_node.op}`")
 
@@ -286,8 +287,8 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
 
         assert (
             isinstance(conv_weight, gs.Constant)
-            and isinstance(conv_bias, (gs.Constant, type(None)))
-            and isinstance(quantizer_step_size, (gs.Constant, type(None)))
+            and isinstance(conv_bias, gs.Constant | type(None))
+            and isinstance(quantizer_step_size, gs.Constant | type(None))
         )
 
         return conv_weight, conv_bias, quantizer_step_size
@@ -300,7 +301,7 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
 
         return np.greater(np.round(np.min(conv_weight.values / step_size_value)), -128)
 
-    def _get_constant_param_to_fold(node_to_fold: gs.Node) -> Optional[gs.Constant]:
+    def _get_constant_param_to_fold(node_to_fold: gs.Node) -> gs.Constant | None:
         parameter_to_fold = [_get_constant_or_none(tensor) for tensor in node_to_fold.inputs]
         parameter_to_fold = [tensor for tensor in parameter_to_fold if tensor is not None]
 
@@ -459,8 +460,9 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
 
 @register_onnx_transform
 def eliminate_nop_reformatting_sequences(graph: gs.Graph) -> gs.Graph:
-    """Eliminate meaningless reformatting sequences
-    (e.g. Flatten->Reshape with identical input and output shapes)
+    """Eliminate meaningless reformatting sequences.
+
+    (e.g. Flatten->Reshape with identical input and output shapes.)
 
     Args:
         graph (gs.Graph): a ONNX graph.
@@ -645,26 +647,26 @@ def remove_if_has_unique_non_optional_input_and_unique_used_output(node: gs.Node
     log.debug(f"Removed {nodestr(node, True)}")
 
 
-def input_node_of(node: gs.Node, tensor_idx: int = 0, producer_idx: int = 0) -> Optional[gs.Node]:
+def input_node_of(node: gs.Node, tensor_idx: int = 0, producer_idx: int = 0) -> gs.Node | None:
     if len(node.inputs) > tensor_idx and len(node.inputs[tensor_idx].inputs) > producer_idx:
         return node.i(tensor_idx, producer_idx)
     return None
 
 
-def output_node_of(node: gs.Node, tensor_idx: int = 0, consumer_idx: int = 0) -> Optional[gs.Node]:
+def output_node_of(node: gs.Node, tensor_idx: int = 0, consumer_idx: int = 0) -> gs.Node | None:
     if len(node.outputs) > tensor_idx and len(node.outputs[tensor_idx].outputs) > consumer_idx:
         return node.o(consumer_idx, tensor_idx)
     return None
 
 
-def get_defining_op_type(tensor: Tensor) -> Optional[str]:
-    """Get defining node's operation type, return None if tensor has two or more defining ops
+def get_defining_op_type(tensor: gs.Constant | gs.Variable) -> str | None:
+    """Get defining node's operation type, return None if tensor has two or more defining ops.
 
     Args:
-        tensor (Tensor): tensor to examine
+        tensor (gs.Constant | gs.Variable): tensor to examine
 
     Returns:
-        Optional[str]: ONNX operation type in string or None if cannot specify single unique defining op
+        str | None: ONNX operation type in string or None if cannot specify single unique defining op
 
     """
     if len(tensor.inputs) != 1:
@@ -676,13 +678,13 @@ def get_defining_op_type(tensor: Tensor) -> Optional[str]:
     return tensor.inputs[0].op
 
 
-def get_defining_node(tensor: Tensor) -> Optional[gs.Node]:
+def get_defining_node(tensor: gs.Constant | gs.Variable) -> gs.Node | None:
     if tensor.inputs:
         return tensor.inputs[0]
     return None
 
 
-def replace_all_uses(existing_tensor: Tensor, new_tensor: Tensor) -> None:
+def replace_all_uses(existing_tensor: gs.Constant | gs.Variable, new_tensor: gs.Constant | gs.Variable) -> None:
     for node in existing_tensor.outputs:
         i = node.inputs.index(existing_tensor)
         node.inputs[i] = new_tensor

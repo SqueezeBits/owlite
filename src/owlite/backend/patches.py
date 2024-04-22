@@ -1,14 +1,12 @@
-# pylint: skip-file
-# ruff: noqa
 # fmt: off
 import inspect
 import math
 import operator
 
 from collections import OrderedDict
-from enum import Enum
+from enum import IntEnum
 from packaging import version
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from typing import TYPE_CHECKING, Callable, Union
 
 if TYPE_CHECKING:
     from torch.types import _dtype as DType
@@ -54,7 +52,7 @@ def force_dynamo_disallow_in_graph(obj):
     obj.torchdynamo_force_dynamic = True
 
 
-class PatchStatus(Enum):
+class PatchStatus(IntEnum):
     REGISTERED = 0
     APPLIED = 1
 
@@ -65,14 +63,14 @@ class Patch():
     patched_fn_path: str # the full qualified name of the patched function
     status: PatchStatus # status of the patch
     disallow_in_graph: bool # whether to allow the patched function in graph
-    hard_patch_target: Optional[str] # patch target to assign the patched function with assign operator(=)
+    hard_patch_target: str | None # patch target to assign the patched function with assign operator(=)
 
     def __init__(
             self, 
             orig_fn: Callable, 
             patched_fn: Callable,
             disallow_in_graph: bool,
-            hard_patch_target: Optional[str],
+            hard_patch_target: str | None,
         ) -> None:
         self.orig_fn = orig_fn
         self.patched_fn = patched_fn
@@ -86,7 +84,7 @@ class Patch():
 
         if self.hard_patch_target:
             log.debug_warning(f"Hard patch for {self.hard_patch_target} detected, "
-                              "note that hard patch can result in unexpected outcome")
+                            "note that hard patch can result in unexpected outcome")
 
     def apply(self) -> None:
         if self.status == PatchStatus.APPLIED:
@@ -122,7 +120,7 @@ class PatchManager:
     patches: list[Patch] = []
 
     @classmethod
-    def is_registered(cls, fn_or_fn_path: Union[Callable, str]):
+    def is_registered(cls, fn_or_fn_path: Callable | str):
         return fn_or_fn_path in [
             f for patch in cls.patches for f in [
                 patch.orig_fn, patch.patched_fn, patch.orig_fn_path, patch.patched_fn_path
@@ -134,7 +132,7 @@ class PatchManager:
         cls, 
         orig_fn: Callable, 
         patched_fn: Callable, 
-        hard_patch_target: Optional[str] = None, 
+        hard_patch_target: str | None = None, 
         disallow_in_graph: bool = False,
     ) -> None:
         if cls.is_registered(orig_fn):
@@ -161,7 +159,7 @@ class PatchManager:
             )
 
     @classmethod
-    def deregister_patch(cls, fn_or_fn_path: Union[Callable, str]) -> None:
+    def deregister_patch(cls, fn_or_fn_path: Callable | str) -> None:
         if not cls.is_registered(fn_or_fn_path):
             fn_path = (
                 fn_or_fn_path if isinstance(fn_or_fn_path, str) 
@@ -188,7 +186,7 @@ class PatchManager:
             patch.rollback()
 
 
-def register_patch(orig_fn: Callable, hard_patch_target: Optional[str] = None, disallow_in_graph: bool = False):
+def register_patch(orig_fn: Callable, hard_patch_target: str | None = None, disallow_in_graph: bool = False):
     def wrap(patched_fn: Callable):
         PatchManager.register_patch(orig_fn, patched_fn, hard_patch_target, disallow_in_graph)
         return patched_fn
@@ -245,7 +243,7 @@ def slow_scaled_dot_product_attention(
 # Made it a local function with no changes in its contents from torch==2.1.0 (same as torch==2.0.0)
 @register_patch(torch.nn.functional._mha_shape_check, disallow_in_graph=require_explicit_disallow)
 def patched_mha_shape_check(query: Tensor, key: Tensor, value: Tensor,
-                     key_padding_mask: Optional[Tensor], attn_mask: Optional[Tensor], num_heads: int):
+                     key_padding_mask: Tensor | None, attn_mask: Tensor | None, num_heads: int):
     # Verifies the expected shape for `query, `key`, `value`, `key_padding_mask` and `attn_mask`
     # and returns if the input is batched or not.
     # Raises an error if `query` is not 2-D (unbatched) or 3-D (batched) tensor.
@@ -295,7 +293,7 @@ def patched_mha_shape_check(query: Tensor, key: Tensor, value: Tensor,
 # [SQZB] torch.nn.functional._none_or_dtype causes the error: "torch.* op returned non-Tensor bool"
 # Made it a local function with no changes in its contents from torch==2.1.0 (same as torch==2.0.0)
 @register_patch(torch.nn.functional._none_or_dtype, disallow_in_graph=require_explicit_disallow)
-def patched_none_or_dtype(input: Optional[Tensor]) -> Optional[DType]:
+def patched_none_or_dtype(input: Tensor | None) -> DType | None:
     if input is None:
         return None
     elif isinstance(input, torch.Tensor):
@@ -309,7 +307,7 @@ def patched_in_projection_packed(
     k: Tensor,
     v: Tensor,
     w: Tensor,
-    b: Optional[Tensor] = None,
+    b: Tensor | None = None,
 ) -> list[Tensor]:
     r"""
     Performs the in-projection step of the attention operation, using packed weights.
@@ -388,27 +386,27 @@ def patched_multi_head_attention_forward(
     value: Tensor,
     embed_dim_to_check: int,
     num_heads: int,
-    in_proj_weight: Optional[Tensor],
-    in_proj_bias: Optional[Tensor],
-    bias_k: Optional[Tensor],
-    bias_v: Optional[Tensor],
+    in_proj_weight: Tensor | None,
+    in_proj_bias: Tensor | None,
+    bias_k: Tensor | None,
+    bias_v: Tensor | None,
     add_zero_attn: bool,
     dropout_p: float,
     out_proj_weight: Tensor,
-    out_proj_bias: Optional[Tensor],
+    out_proj_bias: Tensor | None,
     training: bool = True,
-    key_padding_mask: Optional[Tensor] = None,
+    key_padding_mask: Tensor | None = None,
     need_weights: bool = True,
-    attn_mask: Optional[Tensor] = None,
+    attn_mask: Tensor | None = None,
     use_separate_proj_weight: bool = False,
-    q_proj_weight: Optional[Tensor] = None,
-    k_proj_weight: Optional[Tensor] = None,
-    v_proj_weight: Optional[Tensor] = None,
-    static_k: Optional[Tensor] = None,
-    static_v: Optional[Tensor] = None,
+    q_proj_weight: Tensor | None = None,
+    k_proj_weight: Tensor | None = None,
+    v_proj_weight: Tensor | None = None,
+    static_k: Tensor | None = None,
+    static_v: Tensor | None = None,
     average_attn_weights: bool = True,
     is_causal: bool = False,
-) -> tuple[Tensor, Optional[Tensor]]:
+) -> tuple[Tensor, Tensor | None]:
     r"""
     Args:
         query, key, value: map a query and a set of key-value pairs to an output.
@@ -813,12 +811,12 @@ def patched_nn_multihead_attention_forward(
     query: Tensor,
     key: Tensor,
     value: Tensor,
-    key_padding_mask: Optional[Tensor] = None,
+    key_padding_mask: Tensor | None = None,
     need_weights: bool = True,
-    attn_mask: Optional[Tensor] = None,
+    attn_mask: Tensor | None = None,
     average_attn_weights: bool = True,
     is_causal: bool = False,
-) -> tuple[Tensor, Optional[Tensor]]:
+) -> tuple[Tensor, Tensor | None]:
     is_batched = query.dim() == 3
 
     key_padding_mask = F._canonical_mask(
@@ -1020,8 +1018,8 @@ if "2.0.0" <= torch.__version__ < "2.1.0":
     def patched_nn_transformer_encoder_layer_forward(
         self,
         src: Tensor,
-        src_mask: Optional[Tensor] = None,
-        src_key_padding_mask: Optional[Tensor] = None,
+        src_mask: Tensor | None = None,
+        src_key_padding_mask: Tensor | None = None,
         is_causal: bool = False,
     ) -> Tensor:
         r"""Pass the input through the encoder layer.
@@ -1184,10 +1182,10 @@ if "2.0.0" <= torch.__version__ < "2.1.0":
         self,
         tgt: Tensor,
         memory: Tensor,
-        tgt_mask: Optional[Tensor] = None,
-        memory_mask: Optional[Tensor] = None,
-        tgt_key_padding_mask: Optional[Tensor] = None,
-        memory_key_padding_mask: Optional[Tensor] = None,
+        tgt_mask: Tensor | None = None,
+        memory_mask: Tensor | None = None,
+        tgt_key_padding_mask: Tensor | None = None,
+        memory_key_padding_mask: Tensor | None = None,
         tgt_is_causal: bool = False,
         memory_is_causal: bool = False,
     ) -> Tensor:
@@ -1297,9 +1295,9 @@ if "2.1.0" <= torch.__version__ < "2.3.0":
     # Made it a local function with no changes in its contents from torch==2.1.0
     @register_patch(torch.nn.modules.transformer._detect_is_causal_mask, disallow_in_graph=require_explicit_disallow)
     def patched_detect_is_causal_mask(
-        mask: Optional[Tensor],
-        is_causal: Optional[bool] = None,
-        size: Optional[int] = None,
+        mask: Tensor | None,
+        is_causal: bool | None = None,
+        size: int | None = None,
     ) -> bool:
         """Return whether the given attention mask is causal.
 
@@ -1339,7 +1337,7 @@ if "2.1.0" <= torch.__version__ < "2.3.0":
 
 
     @register_patch(torch.nn.modules.transformer._get_seq_len, disallow_in_graph=require_explicit_disallow)
-    def patched_get_seq_len(src: Tensor, batch_first: bool) -> Optional[int]:
+    def patched_get_seq_len(src: Tensor, batch_first: bool) -> int | None:
         # [SQZB] Accessing src.is_nested causes an error when calling the graph module.
         # The error message: "target builtins.getattr has type str but a Callable is expected"
         # if src.is_nested:
@@ -1377,9 +1375,9 @@ if (
         shift_size: list[int],
         attention_dropout: float = 0.0,
         dropout: float = 0.0,
-        qkv_bias: Optional[Tensor] = None,
-        proj_bias: Optional[Tensor] = None,
-        logit_scale: Optional[torch.Tensor] = None,
+        qkv_bias: Tensor | None = None,
+        proj_bias: Tensor | None = None,
+        logit_scale: torch.Tensor | None = None,
         training: bool = True,
     ) -> Tensor:
         """

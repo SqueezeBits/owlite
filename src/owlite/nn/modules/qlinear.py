@@ -1,6 +1,4 @@
 # pylint: disable=not-callable
-from typing import Optional
-
 import torch
 import torch.nn.functional as F
 from torch import Tensor
@@ -12,8 +10,7 @@ from .qmodule_mixins import UnaryNeuralQModuleMixin
 
 # mypy: disable-error-code=misc
 class QLinear(torch.nn.Linear, UnaryNeuralQModuleMixin):
-    """Applies a linear transformation to the incoming data: $$ y = xA_q^T + b $$,
-    where $$ A_q $$ represents the fake-quantized weight.
+    r"""Applies a linear transformation with fake-quantized weight $$ A_q $$ to the incoming data: $$ y = xA_q^T + b $$.
 
     Additionally, fake-quantization is applicable to both the bias and bias addition:
     $$y = \text{quant}(xW_q^T) + \text{quant}(b)$$, where represents $$\text{quant}$$ the fake-quantize function.
@@ -26,13 +23,13 @@ class QLinear(torch.nn.Linear, UnaryNeuralQModuleMixin):
     def __init__(
         self,
         linear: torch.nn.Linear,
-        weight_opts: Optional[FakeQuantizerOptions] = None,
+        weight_opts: FakeQuantizerOptions | None = None,
     ) -> None:
-        """Initializes instance from an existing `torch.nn.Linear` instance, copying the weights and bias if it exists.
+        """Convert a `Linear` instance to the analogous `QLinear` instance, copying weights and bias if exists.
 
         Args:
-            linear (`torch.nn.Linear`): An existing `torch.nn.Linear` instance.
-            weight_opts (`Optional[FakeQuantizerOptions]`, optional): Option for the fake weight quantizer.
+            linear (`torch.nn.Linear`): a `Linear` instance to be converted to `QLinear` instance.
+            weight_opts (`FakeQuantizerOptions | None`, optional): Option for the fake weight quantizer.
                 Defaults to None.
         """
         super().__init__(
@@ -43,24 +40,26 @@ class QLinear(torch.nn.Linear, UnaryNeuralQModuleMixin):
             linear.weight.dtype,
         )
         self.train(linear.training)
-        self.input_quantizer: Optional[FakeQuantizer] = None
+        self.input_quantizer: FakeQuantizer | None = None
         with torch.no_grad():
             self.weight.copy_(linear.weight)
             if self.bias is not None:
                 self.bias.copy_(linear.bias)
-        channel = Channel(0, self.out_features) if (weight_opts is not None and weight_opts.per_channel) else None
+        channel = (
+            Channel(axis=0, size=self.out_features) if (weight_opts is not None and weight_opts.per_channel) else None
+        )
         self.weight_quantizer = FakeQuantizer.create(weight_opts, channel, narrow_range=True)
         if self.weight_quantizer is not None:
             self.weight_quantizer.to(self.weight.device)
-        self.bias_quantizer: Optional[FakeQuantizer] = None
-        self.hidden_input_quantizer: Optional[FakeQuantizer] = None
+        self.bias_quantizer: FakeQuantizer | None = None
+        self.hidden_input_quantizer: FakeQuantizer | None = None
 
     def _set_bias_to_zero(self) -> None:
         self.bias = torch.nn.Parameter(torch.zeros(self.out_features).to(self.weight.device))
 
     # pylint: disable=arguments-renamed, invalid-name
     def forward(self, inputs: Tensor) -> Tensor:
-        """Quantized linear forward"""
+        """Forward with quantized weight if available."""
         weight = self.weight_quantizer(self.weight) if self.weight_quantizer is not None else self.weight
         bias = (
             self.bias_quantizer(self.bias) if self.bias_quantizer is not None and self.bias is not None else self.bias

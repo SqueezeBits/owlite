@@ -1,5 +1,5 @@
+from collections.abc import Callable
 from itertools import product
-from typing import Callable, Optional
 
 import torch
 from torch.fx.node import Node
@@ -15,25 +15,25 @@ from .types import TorchTarget
 
 
 class NodeConfigurator:
-    """Configures inter-nodal fake quantizers for a `torch.fx.Node` based on a `NodeQuantizationOptions`"""
+    """Configures inter-nodal fake quantizers for a `torch.fx.Node` based on a `NodeQuantizationOptions`."""
 
     registry: set[type["NodeConfigurator"]] = set()
-    torch_targets: Optional[set[TorchTarget]] = None
+    torch_targets: set[TorchTarget] | None = None
 
     class DuplicateRegistrationError(Exception):
-        """Error indicating duplicate registration of a torch target to more than one NodeConfigurator subclasses"""
+        """Error indicating duplicate registration of a torch target to more than one NodeConfigurator subclasses."""
 
     @classmethod
     def register(cls, *torch_target: TorchTarget) -> Callable[..., type["NodeConfigurator"]]:
-        """
-        A class-method meant to be used as a decorator when declaring a subclass of `NodeConfigurator` to register it
-        with the designated Torch targets. There are three types of Torch targets.
+        """Get the decorator to register a subclass of `NodeConfigurator` with the designated Torch targets.
+
+        There are three types of Torch targets.
         1. a function from the either `torch` or `operator`
             e.g. torch.matmul, torch.nn.functional.linear, operator.add
         2. a native subclass of `torch.nn.Module`
             e.g. torch.nn.Conv2d, torch.nn.Linear
         3. a string representing the name of a method of the `torch.Tensor`
-            e.g. "matmul", "add", "add_"
+            e.g. "matmul", "add", "add_".
         """
         if cls is not NodeConfigurator:
             raise TypeError("register method must be called by the `NodeConfigurator` class itself")
@@ -60,13 +60,8 @@ class NodeConfigurator:
         return registerer
 
     @classmethod
-    def configure(
-        cls,
-        node: Node,
-        option: NodeCompressionOptions,
-    ) -> None:
-        """Configures the `node` with the `options` if there is any registered subclass of `NodeConfigurator`
-        eligible for configuring it.
+    def configure(cls, node: Node, option: NodeCompressionOptions) -> None:
+        """Configure the `node` with the `options` if there is a suitable subclass of `NodeConfigurator` for the `node`.
 
         Args:
             node (Node): an FX node to apply options
@@ -90,9 +85,7 @@ class NodeConfigurator:
 
     @classmethod
     def is_target_matched(cls, node: Node) -> bool:
-        """Checks if `node.target` matches one of the torch targets associated with
-        the `NodeConfigurator` subclass.
-        """
+        """Check if `node.target` matches one of the torch targets associated with the `NodeConfigurator` subclass."""
         if cls.torch_targets is None:
             raise NotImplementedError(
                 f"{cls.__name__}.torch_targets must be defined to be a proper subclass of NodeConfigurator. "
@@ -105,7 +98,7 @@ class NodeConfigurator:
         self.option = option
 
     def apply(self) -> None:
-        """Applies quantization to the `self.node` with `self.options`"""
+        """Apply quantization to the `self.node` with `self.options`."""
         graph_module = self.node.graph.owning_module
         if graph_module is None:
             log.warning(f"{nodestr(self.node)} does not belong to a graph module.")
@@ -144,9 +137,7 @@ class NodeConfigurator:
     torch.nn.Conv3d,
 )
 class CallModuleConvNodeConfigurator(NodeConfigurator):
-    """Further configures intra-nodal fake quantizers for a call-module node with one input node whose module is an
-    instance of torch.nn.Conv*d
-    """
+    """Further configures a call-module node with one input node whose module is an instance of `torch.nn.Conv*d`."""
 
     def apply(self) -> None:
         super().apply()
@@ -167,6 +158,7 @@ class CallModuleConvNodeConfigurator(NodeConfigurator):
                 )
                 and isinstance(module, UnaryNeuralQModuleMixin)
             ):
+                weight_quantizer.narrow_range = True
                 module.weight_quantizer = weight_quantizer
                 graph_module.add_submodule(self.node.target, module)
 
@@ -174,13 +166,12 @@ class CallModuleConvNodeConfigurator(NodeConfigurator):
             (input_quantizer := get_target_module(self.node.all_input_nodes[0])), FakeQuantizer
         ) and isinstance(module, UnaryNeuralQModuleMixin):
             module.input_quantizer = input_quantizer
+        module.int32_bias = self.option.simulate_int32_bias  # type: ignore[assignment]
 
 
 @NodeConfigurator.register(torch.nn.Linear)
 class CallModuleLinearNodeConfigurator(CallModuleConvNodeConfigurator):
-    """Further configures intra-nodal fake quantizers for a call-module node with one input node whose module is an
-    instance of torch.nn.Linear
-    """
+    """Further configures a call-module node with one input node whose module is an instance of `torch.nn.Linear`."""
 
     def apply(self) -> None:
         super().apply()
@@ -225,9 +216,7 @@ class CallModuleLinearNodeConfigurator(CallModuleConvNodeConfigurator):
 
 @NodeConfigurator.register(torch.nn.functional.linear)
 class CallFunctionLinearNodeConfigurator(NodeConfigurator):
-    """Further configures intra-nodal fake quantizers for a call-function node whose target is
-    torch.nn.functional.linear
-    """
+    """Further configures a call-function node whose target is `torch.nn.functional.linear`."""
 
     def apply(self) -> None:
         super().apply()

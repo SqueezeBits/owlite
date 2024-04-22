@@ -1,4 +1,4 @@
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import torch
 from torch import Tensor
@@ -10,20 +10,27 @@ def fake_quantize(
     zero_point: Tensor,
     quant_min: int,
     quant_max: int,
-    axis: Optional[int] = None,
+    axis: int | None = None,
 ) -> torch.Tensor:
-    r"""Same as `torch.fake_quantize_per_channel_affine` if `per_channel` is `True`, otherwise
-    `torch.fake_quantize_per_tensor_affine`
+    r"""Apply fake quantization function to the input with given quantization parameters.
 
+    Equivalent to `torch.fake_quantize_per_channel_affine` if `per_channel` is `True`,
+    `torch.fake_quantize_per_tensor_affine` otherwise.
     In OwLite, quantization is simulated through the following mathematical expression:
 
-    $$
+    $$$
     \small
 
-    \text{FakeQuantize}(\text{input})= \text{clip} \left( {\lfloor \frac{\text{input} - \text{zero\_point}}{\text
-    {step\_size}} \rceil }, \text{quant\_min}, \text{quant\_max} \right) \cdot \text{step\_size} + \text{zero\_point}
 
-    $$
+        \text{FakeQuantize}(\text{input})=
+        \left(
+            \text{clip} \left(
+                {\biggl\lfloor \frac{\text{input}}{\text{step\_size}} \biggr\rceil } + \text{zero\_point},
+                \text{quant\_min},
+                \text{quant\_max}
+            \right) - \text{zero\_point}
+        \right) \times \text{step\_size}
+    $$$
 
     The primary objective of exporting to the Open Neural Network Exchange (ONNX) format is to facilitate deployment
     on TensorRT rather than the ONNX runtime. Consequently, the export process is confined to transforming the model
@@ -77,8 +84,7 @@ FakeQuantizeSignature = Callable[
         float,  # grad_scale
         int,  # quant_min
         int,  # quant_max
-        Optional[int],  # axis
-        bool,  # compensate_zp
+        int | None,  # axis
     ],
     Tensor,
 ]

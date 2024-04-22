@@ -1,18 +1,17 @@
 # pylint: disable=duplicate-code
-import json
 import os
 from dataclasses import dataclass, field
-from typing import Any, Optional, Union
+from functools import cached_property
 
 import onnx
 import requests
-from packaging.version import Version
 from torch.fx.graph_module import GraphModule
 from typing_extensions import Self
 
-from ..backend.signature import DynamicSignature, Signature
-from ..options import CompressionOptions, DynamicAxisOptions
+from ..backend.signature import Signature
+from ..options import CompressionOptions
 from ..owlite_core.api_base import DOVE_API_BASE, MAIN_API_BASE
+from ..owlite_core.cache.device import Device
 from ..owlite_core.constants import FX_CONFIGURATION_FORMAT_VERSION, OWLITE_VERSION
 from ..owlite_core.logger import log
 from .baseline import Baseline
@@ -23,15 +22,15 @@ from .utils import upload_file_to_url
 
 @dataclass
 class Experiment(Benchmarkable):
-    """The OwLite experiment"""
+    """The OwLite experiment."""
 
     baseline: Baseline
     has_config: bool
-    input_signature: Optional[Union[Signature, DynamicSignature]] = field(default=None)
+    input_signature: Signature | None = field(default=None)
 
     @property
     def project(self) -> Project:
-        """The parent project for this experiment"""
+        """The parent project for this experiment."""
         return self.baseline.project
 
     @property
@@ -47,11 +46,13 @@ class Experiment(Benchmarkable):
     def label(self) -> str:
         return "_".join((self.project.name, self.baseline.name, self.name))
 
-    @property
+    @cached_property
     def config(self) -> CompressionOptions:
-        """The configuration for this experiment"""
+        """The configuration for this experiment."""
         try:
-            resp = DOVE_API_BASE.post("/compile", json=self.payload(format_version=FX_CONFIGURATION_FORMAT_VERSION))
+            resp = DOVE_API_BASE.post(
+                "/compile", json=self.payload(format_version=str(FX_CONFIGURATION_FORMAT_VERSION))
+            )
         except requests.exceptions.HTTPError as e:
             if e.response and e.response.status_code == 403:
                 log.error(
@@ -60,27 +61,28 @@ class Experiment(Benchmarkable):
                 )  # UX
             elif e.response and e.response.status_code == 426:
                 log.error(
-                    f"Your current version ({Version(OWLITE_VERSION)}) is not supported. "
+                    f"Your current version ({OWLITE_VERSION}) is not supported. "
                     "Please update the package to the latest version with the following command: "
                     "pip install owlite --extra-index-url https://pypi.squeezebits.com/ --upgrade "
                 )  # UX
             raise e
         assert isinstance(resp, dict)
-        return CompressionOptions.load(resp)
+        return CompressionOptions.deserialize(resp)
 
     @classmethod
-    def create(cls, baseline: Baseline, name: str) -> Self:
-        """Creates a new experiment for the baseline.
+    def create(cls, baseline: Baseline, name: str, device: Device) -> Self:
+        """Create a new experiment for the baseline.
 
         Args:
             baseline (Baseline): A baseline
             name (str): The name of the experiment to be created
+            device (Device): The device for benchmarking this experiment.
 
         Returns:
             Experiment: The newly created experiment
         """
         try:
-            _ = MAIN_API_BASE.post(
+            res = MAIN_API_BASE.post(
                 "/projects/runs",
                 json=baseline.payload(run_name=name),
             )
@@ -95,25 +97,27 @@ class Experiment(Benchmarkable):
                         "If not, try using `owl.export(model).`"
                     )  # UX
             raise e
-        experiment = cls(name=name, baseline=baseline, has_config=False)
+        assert isinstance(res, dict)
+        experiment = cls(name=name, baseline=baseline, device=device, has_config=False)
         log.info(f"Created a new {experiment}")  # UX
         baseline.experiments[name] = experiment
         return experiment
 
     @classmethod
-    def load(cls, baseline: Baseline, name: str, *, verbose: bool = True) -> Optional[Self]:
-        """Loads the existing experiment named `name` for the given `baseline`
+    def load(cls, baseline: Baseline, name: str, device: Device, *, verbose: bool = True) -> Self | None:
+        """Load the existing experiment named `name` for the given `baseline`.
 
         Args:
             baseline (Baseline): The baseline holding the experiment
             name (str): The name of the experiment to load
+            device (Device): The device for benchmarking the experiment.
             verbose (bool, optional): If True, prints error message when the experiment is not found. Defaults to True.
 
         Raises:
             e (requests.exceptions.HTTPError): When an unexpected HTTP status code is returned.
 
         Returns:
-            Optional[Experiment]: The loaded experiment if it is found, `None` otherwise.
+            Experiment | None: The loaded experiment if it is found, `None` otherwise.
         """
         try:
             res = MAIN_API_BASE.post("/projects/runs/info", json=baseline.payload(run_name=name))
@@ -128,23 +132,24 @@ class Experiment(Benchmarkable):
             raise e
 
         assert isinstance(res, dict)
-        experiment = cls(name=name, baseline=baseline, has_config=bool(res.get("config_id", "")))
+        experiment = cls(name=name, baseline=baseline, device=device, has_config=bool(res.get("config_id", "")))
         log.info(f"Loaded the existing {experiment}")  # UX
         baseline.experiments[name] = experiment
         return experiment
 
     @classmethod
-    def load_or_create(cls, baseline: Baseline, name: str) -> Self:
-        """Loads the experiment named `name` for the given `baseline` if it already exists, creates a new one otherwise.
+    def load_or_create(cls, baseline: Baseline, name: str, device: Device) -> Self:
+        """Load the experiment named `name` for the given `baseline` if it already exists, creates a new one otherwise.
 
         Args:
             baseline (Baseline): The baseline holding the experiment.
             name (str): The name of the experiment to be loaded or created.
+            device (Device): The device for creating or benchmarking the experiment.
 
         Returns:
             Experiment: The loaded or newly created experiment.
         """
-        experiment = cls.load(baseline, name, verbose=False) or cls.create(baseline, name)
+        experiment = cls.load(baseline, name, device, verbose=False) or cls.create(baseline, name, device)
 
         if experiment.has_config:
             log.info(f"Compression configuration found for '{experiment.name}'")  # UX
@@ -154,7 +159,7 @@ class Experiment(Benchmarkable):
         return experiment
 
     def clone(self, name: str) -> Self:
-        """Clones this experiment.
+        """Clone this experiment.
 
         Args:
             name (str): The name of the new experiment.
@@ -176,7 +181,9 @@ class Experiment(Benchmarkable):
                 raise RuntimeError("Compression configuration not found") from e
             raise e
         assert isinstance(resp, dict)
-        cloned_experiment = type(self)(name=resp["name"], baseline=self.baseline, has_config=self.has_config)
+        cloned_experiment = type(self)(
+            name=resp["name"], baseline=self.baseline, device=self.device, has_config=self.has_config
+        )
         log.info(
             f"Copied compression configuration from the {self} to the new experiment '{cloned_experiment.name}'"
         )  # UX
@@ -184,17 +191,16 @@ class Experiment(Benchmarkable):
 
     def upload(
         self,
-        proto: onnx.ModelProto,
-        model: Optional[GraphModule] = None,
-        dynamic_axis_options: Optional[DynamicAxisOptions] = None,
+        proto: onnx.ModelProto | None = None,
+        model: GraphModule | None = None,
     ) -> None:
-        self.input_signature = Signature.from_onnx(proto, dynamic_axis_options)
+        assert self.input_signature
         log.debug(f"Experiment signature: {self.input_signature}")
 
         try:
             file_dest_url = MAIN_API_BASE.post(
                 "/projects/runs/data/upload",
-                json=self.payload(input_shape=json.dumps(self.input_signature)),
+                json=self.payload(input_shape=self.input_signature.dumps()),
             )
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 400:
@@ -202,7 +208,7 @@ class Experiment(Benchmarkable):
                 if "shapes mismatch" in err_msg["detail"]:
                     log.error(
                         "Input signature of current experiment does not match with baseline's. "
-                        f"Please compare current input signature: {json.dumps(self.input_signature)} "
+                        f"Please compare current input signature: {self.input_signature} "
                         f"and baseline input signature: {self.baseline.input_signature}"
                     )  # UX
                     raise RuntimeError("Input signature mismatch") from e
@@ -210,8 +216,8 @@ class Experiment(Benchmarkable):
         assert file_dest_url is not None and isinstance(file_dest_url, str)
         upload_file_to_url(self.onnx_path, file_dest_url)
 
-    def payload(self, **kwargs: Any) -> dict[str, str]:
-        p = {
+    def payload(self, **kwargs: str | int) -> dict[str, str | int]:
+        p: dict[str, str | int] = {
             "project_id": self.project.id,
             "baseline_name": self.baseline.name,
             "run_name": self.name,
@@ -219,5 +225,5 @@ class Experiment(Benchmarkable):
         p.update(kwargs)
         return p
 
-    def __repr__(self) -> str:
+    def __str__(self) -> str:
         return f"experiment '{self.name}' for the {self.baseline}"

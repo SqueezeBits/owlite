@@ -1,4 +1,5 @@
-from typing import Any, Callable, Optional, Union
+from collections.abc import Callable
+from typing import Any
 
 import requests
 
@@ -7,7 +8,7 @@ from .constants import OWLITE_API_DEFAULT_TIMEOUT
 from .logger import log
 from .owlite_settings import OWLITE_SETTINGS
 
-ResponseType = Union[dict, int, str, bool, list[dict]]
+ResponseType = dict[str, Any] | int | str | bool | list[dict[str, Any]]
 
 
 class APIBase:
@@ -27,7 +28,7 @@ class APIBase:
         self._base_url = new_base_url.rstrip("/")
 
     def _create_request_kwargs(self, **kwargs: dict[str, Any]) -> dict:
-        """Creates request keyword arguments with default settings and authentication headers.
+        """Create request keyword arguments with default settings and authentication headers.
 
         Returns:
             dict: Request keyword arguments.
@@ -47,7 +48,7 @@ class APIBase:
     def _request(
         self, request_callable: Callable[[], requests.Response], num_retry_after_timeout: int = 0
     ) -> ResponseType:
-        """Sends an HTTP request and handles response and retries on timeout or authorization issues.
+        """Make an HTTP request and handle response, retrying on timeout or authorization issues.
 
         Args:
             request_callable: The callable to make the request.
@@ -88,9 +89,7 @@ class APIBase:
 
                         refresh_res = resp.json()
                         assert isinstance(refresh_res, dict)
-                        OWLITE_SETTINGS.tokens = Tokens(
-                            access_token=refresh_res["access_token"], refresh_token=refresh_res["refresh_token"]
-                        )  # token refreshed
+                        OWLITE_SETTINGS.tokens = Tokens(**refresh_res)  # token refreshed
 
                         log.debug("Token refreshed, re-attempting original request")
                         i -= 1
@@ -113,12 +112,13 @@ class APIBase:
 
         raise requests.exceptions.Timeout()
 
-    def get(self, url: str, params: Optional[dict[str, Any]] = None, **kwargs: dict[str, Any]) -> ResponseType:
-        """Sends a GET request to the given URL.
+    def get(self, url: str, params: dict[str, Any] | None = None, **kwargs: Any) -> ResponseType:
+        """Make a GET request to the given URL.
 
         Args:
             url (str): URL endpoint.
             params (dict, optional): Parameters for the request. Defaults to None.
+            **kwargs: Keyword arguments to invoke `requests.get` with.
 
         Returns:
             ResponseType: Response data.
@@ -135,12 +135,13 @@ class APIBase:
 
         return self._request(request_callable)
 
-    def post(self, url: str, data: Optional[dict[str, Any]] = None, **kwargs: dict[str, Any]) -> ResponseType:
-        """Sends a POST request to the given URL.
+    def post(self, url: str, data: dict[str, Any] | None = None, **kwargs: Any) -> ResponseType:
+        """Make a POST request to the given URL.
 
         Args:
             url (str): URL endpoint.
             data (dict, optional): Data to be sent. Defaults to None.
+            **kwargs: Keyword arguments to invoke `requests.post` with.
 
         Returns:
             ResponseType: Response data.
@@ -157,12 +158,13 @@ class APIBase:
 
         return self._request(request_callable)
 
-    def put(self, url: str, data: Optional[dict[str, Any]] = None, **kwargs: dict[str, Any]) -> ResponseType:
-        """Sends a PUT request to the given URL.
+    def put(self, url: str, data: dict[str, Any] | None = None, **kwargs: Any) -> ResponseType:
+        """Make a PUT request to the given URL.
 
         Args:
             url (str): URL endpoint.
             data (dict, optional): Data to be sent. Defaults to None.
+            **kwargs: Keyword arguments to invoke `requests.put` with.
 
         Returns:
             ResponseType: Response data.
@@ -179,12 +181,13 @@ class APIBase:
 
         return self._request(request_callable)
 
-    def patch(self, url: str, data: Optional[dict[str, Any]] = None, **kwargs: dict[str, Any]) -> ResponseType:
-        """Sends a PATCH request to the given URL.
+    def patch(self, url: str, data: dict[str, Any] | None = None, **kwargs: Any) -> ResponseType:
+        """Make a PATCH request to the given URL.
 
         Args:
             url (str): URL endpoint.
             data (dict, optional): Data to be sent. Defaults to None.
+            **kwargs: Keyword arguments to invoke `requests.patch` with.
 
         Returns:
             ResponseType: Response data.
@@ -201,12 +204,13 @@ class APIBase:
 
         return self._request(request_callable)
 
-    def delete(self, url: str, data: Optional[dict[str, Any]] = None, **kwargs: dict[str, Any]) -> ResponseType:
-        """Sends a DELETE request to the given URL.
+    def delete(self, url: str, data: dict[str, Any] | None = None, **kwargs: Any) -> ResponseType:
+        """Make a DELETE request to the given URL.
 
         Args:
             url (str): URL endpoint.
             data (dict, optional): Data to be sent. Defaults to None.
+            **kwargs: Keyword arguments to invoke `requests.delete` method with.
 
         Returns:
             ResponseType: Response data.

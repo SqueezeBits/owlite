@@ -1,4 +1,4 @@
-"""Handles device-related commands in OwLite CLI using argparse"""
+"""Handles device-related commands in OwLite CLI using argparse."""
 # pylint: disable=unnecessary-lambda, too-few-public-methods
 from argparse import Namespace, _SubParsersAction
 
@@ -13,11 +13,11 @@ from ..device import (
 
 
 class DeviceCommands(BaseOwLiteCLICommand):
-    """Handles device-related commands in OwLite CLI."""
+    """Handle device-related commands in OwLite CLI."""
 
     @staticmethod
     def register_subcommand(parser: _SubParsersAction) -> None:
-        """Registers subcommands for device-related operations.
+        """Register subcommands for device-related operations.
 
         Args:
             parser (_SubParsersAction): The parser object to add subcommands to.
@@ -50,7 +50,7 @@ class DeviceCommand:
     """Handles device-specific commands in OwLite CLI."""
 
     def __init__(self, args: Namespace) -> None:
-        """Initializes the DeviceCommand.
+        """Initialize the DeviceCommand.
 
         Args:
             args: Arguments passed to the command.
@@ -58,8 +58,7 @@ class DeviceCommand:
         self.args = args
 
     def run(self) -> None:
-        """Executes the specified device-related operation based on the mode specified"""
-
+        """Execute the specified device-related operation based on the mode specified."""
         if self.args.mode == "ls":
             print_manager_list()
         elif self.args.mode == "add":

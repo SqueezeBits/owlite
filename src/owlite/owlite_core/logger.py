@@ -1,7 +1,7 @@
 # pylint: disable=protected-access
 import logging
 import os
-from typing import Any, Callable, Optional, TypeVar, cast
+from typing import Any, cast
 
 from onnx_graphsurgeon.logger import G_LOGGER
 
@@ -11,7 +11,7 @@ ULTRA_VERBOSE = -10
 
 # pylint: disable=missing-function-docstring, too-few-public-methods
 class Logger(logging.Logger):
-    """The Logger class whose level can be only set via the environmental variable OWLITE_LOG_LEVEL"""
+    """The Logger class whose level can be only set via the environmental variable OWLITE_LOG_LEVEL."""
 
     ENV_VAR = "OWLITE_LOG_LEVEL"
 
@@ -28,11 +28,11 @@ class Logger(logging.Logger):
         class _WarningFilterContext:
             def __init__(self, logger: logging.Logger) -> None:
                 self.logger = logger
-                self.warning_filter: Optional[logging.Filter] = None
+                self.warning_filter: logging.Filter | None = None
 
             def __enter__(self) -> logging.Logger:
                 class WarningFilter(logging.Filter):
-                    """Class to filter warnings"""
+                    """Class to filter warnings."""
 
                     def filter(self, record: logging.LogRecord) -> bool:
                         return record.levelno < DEBUG_WARNING
@@ -125,30 +125,5 @@ if "owlite" not in logging.getLogger().manager.loggerDict:
     stream_handler.setFormatter(formatter)
 
     log.addHandler(stream_handler)
-
 else:
     log = cast(Logger, logging.getLogger().manager.loggerDict["owlite"])
-
-
-T = TypeVar("T")
-
-
-def suppress_owlite_warnings(cls: T) -> T:
-    """
-    A decorator to suppress owlite warnings during the initialization of class.
-
-    Parameters:
-    - cls: The class to which the decorator is applied.
-
-    Returns:
-    - The decorated class.
-    """
-    original_init: Callable[..., None] = cls.__init__  # type: ignore[misc]
-
-    def new_init(self: Any, *args: Any, **kwargs: Any) -> None:
-        assert isinstance(log, Logger)
-        with log.ignore_warnings():
-            original_init(self, *args, **kwargs)
-
-    cls.__init__ = new_init  # type: ignore[misc]
-    return cls

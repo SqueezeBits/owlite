@@ -1,71 +1,51 @@
 import inspect
 import json
+from collections.abc import Callable
 from copy import deepcopy
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 import onnx_graphsurgeon as gs
 import torch
 from onnx import ModelProto
 from torch.fx.graph_module import GraphModule
+from typing_extensions import Self
 
 from ..options import DynamicAxisOptions, DynamicInputOptions
 from ..owlite_core.logger import log
 from .utils import normalize_parameter_name
 
 
-class DynamicSignature(list[tuple[str, tuple[Union[int, str, tuple[int, ...]], ...]]]):
-    """The input signature of a model which have dynamic input shape"""
+class Signature(dict[str, list[int | str | list[int]]]):
+    """The input signature of a model."""
 
-
-class Signature(list[tuple[str, tuple[int, ...]]]):
-    """The input signature of a model"""
+    def __str__(self) -> str:
+        return self.dumps()
 
     @property
     def is_dynamic(self) -> bool:
-        """Whether this signature contains any dynamic shape or not."""
-        return any((-1 in shape) for _, shape in self)
-
-    def asdict(self) -> dict[str, tuple[int, ...]]:
-        """Reinterpret this signature as a dictionary whose keys are the names of each input tensor
-        mapped to the shape of the input tensor"""
-        return dict(*self)
-
-    def get(self, name: str) -> Optional[tuple[int, ...]]:
-        """Gets the shape of the input tensor named `name`
-
-        Args:
-            name (str): The name of an input tensor.
-
-        Returns:
-            Optional[tuple[int, ...]]: The shape of the input tensor if found, `None` otherwise.
-        """
-        return self.asdict().get(name)
-
-    def __str__(self) -> str:
-        return json.dumps(self)
+        """Check whether this signature contains any dynamic shape or not."""
+        return any(("N" in shape) or any(isinstance(s, list) for s in shape) for _, shape in self.items())
 
     @classmethod
-    def from_onnx(
-        cls, proto_or_graph: Union[ModelProto, gs.Graph], options: Optional[DynamicAxisOptions] = None
-    ) -> Union["Signature", DynamicSignature]:
-        """Creates the signature from an ONNX proto or an ONNX graph.
+    def from_onnx(cls, proto_or_graph: ModelProto | gs.Graph, options: DynamicAxisOptions | None = None) -> Self:
+        """Create the signature from an ONNX proto or an ONNX graph.
 
         Args:
-            proto_or_graph (Union[ModelProto, gs.Graph]): An ONNX proto or an ONNX graph.
-            options (Optional[DynamicAxisOptions]): Optional dynamic input options. Defaults to `None`.
+            proto_or_graph (ModelProto | gs.Graph): An ONNX proto or an ONNX graph.
+            options (DynamicAxisOptions | None): Optional dynamic input options. Defaults to `None`.
 
         Returns:
-            Union["Signature", DynamicSignature]: A `Signature` object if `options` is `None`,
-                `DynamicSignature` object otherwise.
+            Signature: The created `Signature` object.
         """
         graph = gs.import_onnx(proto_or_graph) if isinstance(proto_or_graph, ModelProto) else proto_or_graph
         signature = cls(
-            (input_tensor.name, tuple((-1 if isinstance(s, str) else s) for s in input_tensor.shape))
+            (input_tensor.name, ["N" if isinstance(s, str) else s for s in input_tensor.shape])
             for input_tensor in graph.inputs
             if isinstance(input_tensor, gs.Variable) and input_tensor.shape is not None
         )
         if options is not None:
-            return dynamize_signature(signature, options)
+            signature.mark_dynamic_axes(options)
+
         return signature
 
     @classmethod
@@ -74,19 +54,18 @@ class Signature(list[tuple[str, tuple[int, ...]]]):
         module: torch.nn.Module,
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
-        options: Optional[DynamicAxisOptions] = None,
-    ) -> Union["Signature", DynamicSignature]:
-        """Creates the signature from a module and inputs provided for its forward method.
+        options: DynamicAxisOptions | None = None,
+    ) -> Self:
+        """Create the signature from a module and inputs provided for its forward method.
 
         Args:
             module (torch.nn.Module): A module.
             args (tuple[Any, ...]): Arguments to be provided for the module's forward method.
             kwargs (dict[str, Any]): Keyword arguments to be provided for the module's forward method.
-            options (Optional[DynamicAxisOptions]): Optional dynamic input options. Defaults to `None`.
+            options (DynamicAxisOptions | None): Optional dynamic input options. Defaults to `None`.
 
         Returns:
-            Union["Signature", DynamicSignature]: A `Signature` object if `options` is `None`,
-                `DynamicSignature` object otherwise.
+            Signature: The created `Signature` object.
         """
         if isinstance(module, GraphModule):
             signature_map = map_graph_module_signature(module, *args, **kwargs)
@@ -96,87 +75,109 @@ class Signature(list[tuple[str, tuple[int, ...]]]):
         signature = cls()
         for name, value in signature_map.items():
             if isinstance(value, torch.Tensor):
-                signature.append((name, tuple(value.shape)))
+                signature[name] = list(value.shape)
                 continue
             if isinstance(value, tuple):
-                signature.extend((f"{name}_{i}", t.shape) for i, t in enumerate(value) if isinstance(t, torch.Tensor))
+                signature.update(
+                    {f"{name}_{i}": list(t.shape) for i, t in enumerate(value) if isinstance(t, torch.Tensor)}
+                )
                 continue
             if isinstance(value, dict):
-                signature.extend((k, t.shape) for k, t in value.items() if isinstance(t, torch.Tensor))
+                signature.update({k: list(t.shape) for k, t in value.items() if isinstance(t, torch.Tensor)})
                 continue
-            signature.append((name, ()))
+            signature[name] = []
 
         if options is not None:
-            return dynamize_signature(signature, options)
+            signature.mark_dynamic_axes(options)
+
         return signature
 
     @classmethod
     def from_str(
         cls,
         string: str,
-    ) -> Union["Signature", DynamicSignature]:
-        """Creates the signature from string provided for API response.
+    ) -> Self:
+        """Create the signature from string provided by API response.
+
         Args:
-            string (str): A string.
+            string (str): JSON dumped string.
+
         Returns:
-            Union["Signature", DynamicSignature]: A `Signature` object if `options` is `None`,
-                `DynamicSignature` object otherwise.
+            Signature: The created `Signature` object.
         """
-        signature_list = json.loads(string)
-        signature = cls((name, tuple(value)) for name, value in signature_list if isinstance(name, str))
-        return signature
+        # Cast the return value of json.loads to a dictionary for backwards compatibility.
+        return cls(dict(json.loads(string)))
+
+    def dumps(self) -> str:
+        """Dump signature to string.
+
+        Returns:
+            str: The dumped string.
+        """
+        # Currently, shape checking logic in BE cannot properly handle dictionary dumped strings
+        # so, dump in legacy format(list version) for now. This should be removed when BE becomes
+        # capable of handling dictionaries.
+        return json.dumps(list(self.items()))
+
+    def mark_dynamic_axes(self, options: DynamicAxisOptions) -> None:
+        """Mark dynamic axes of the signature with placeholder value.
+
+        Args:
+            options (DynamicAxisOptions): The dynamic axis options to apply.
+        """
+        check_names_in_options(self, options)
+
+        for name, axis in options.items():
+            sig = self.get(name, [])
+            try:
+                sig[axis] = "N"
+            except IndexError as e:
+                log.error(f"Axis {axis} is not valid for tensor with rank {len(sig)}")
+                raise e
+
+    def fill_dynamic_ranges(self, options: DynamicInputOptions) -> None:
+        """Fill dynamic range settings for the benchmark.
+
+        Args:
+            options (DynamicInputOptions): The dynamic input options to apply.
+        """
+        check_names_in_options(self, options)
+
+        for name, option in options.items():
+            if (sig := self.get(name, None)) is None:
+                raise ValueError("Invalid tensor name")
+
+            try:
+                dynamic_axis = sig.index("N")
+            except ValueError as e:
+                raise ValueError(f"Tensor({name}) is not marked as dynamic") from e
+
+            dynamic_range = option.to_list()
+            sig[dynamic_axis] = dynamic_range
 
 
-def dynamize_signature(input_signature: Signature, options: DynamicAxisOptions) -> DynamicSignature:
-    """Creates dynamic signature from a static input signature using the dynamic input options.
+def check_names_in_options(input_signature: Signature, options: DynamicAxisOptions | DynamicInputOptions) -> None:
+    """Check if tensor names in options are valid.
 
     Args:
-        input_signature (Signature): An input signature.
-        options (DynamicAxisOptions): A dynamic export options.
+        input_signature (Signature): The input signature to apply options to.
+        options (DynamicAxisOptions | DynamicInputOptions): The option to apply.
 
-    Returns:
-        DynamicSignature: The converted dynamic signature.
+    Raises:
+        ValueError: When tensor names in options are not found in input signature.
     """
-    new_input_signature: DynamicSignature = DynamicSignature()
-    for name, shape in input_signature:
-        axis_options = options.get(name)
-        if axis_options is None:
-            continue
-        axis = axis_options.axis
-        new_input_signature.append((name, tuple("N" if i == axis else s for i, s in enumerate(shape))))
-    return new_input_signature
-
-
-def update_dynamic_signature(input_signature: DynamicSignature, options: DynamicInputOptions) -> DynamicSignature:
-    """Updates signature with dynamic input options for TensorRT benchmark
-
-    Args:
-        input_signature (DynamicSignature): current input signature with dynamic shape
-        options (DynamicInputOptions): dynamic input sizes for benchmarking
-
-    Returns:
-        DynamicSignature: input signature with dynamic input options
-    """
-    new_input_signature: DynamicSignature = DynamicSignature([])
-    for name, shape in input_signature:
-        size_options = options.get(name)
-        if size_options is None:
-            continue
-        range_setting = (
-            size_options.min,
-            size_options.opt,
-            size_options.max,
-            size_options.test,
-        )
-        new_input_signature.append((name, tuple(s if isinstance(s, int) else range_setting for s in shape)))
-    return new_input_signature
+    names_in_signature = set(input_signature.keys())
+    names_in_options = set(options.keys())
+    invalid_names = names_in_options.difference(names_in_signature)
+    if invalid_names:
+        raise ValueError(f"Invalid tensor name: {invalid_names}")
 
 
 # pylint: disable=protected-access
 def map_signature(
-    func_or_its_params: Union[Callable, dict[str, inspect.Parameter]], *args: Any, **kwargs: Any
+    func_or_its_params: Callable | dict[str, inspect.Parameter], *args: Any, **kwargs: Any
 ) -> dict[str, Any]:
-    """Maps the parameter names of a function to the corresponding values passed in args and kwargs.
+    """Map the parameter names of a function to the corresponding values passed in args and kwargs.
 
     This function returns a list of tuples, where each tuple contains a parameter name and its corresponding value.
     If a parameter name exists in the kwargs dictionary, its value is taken from there. Otherwise, the values are taken
@@ -184,7 +185,7 @@ def map_signature(
     (if it exists) is used.
 
     Args:
-        func_or_its_params (Union[Callable, dict[str, inspect.Parameter]]): Function to inspect or its parameters
+        func_or_its_params (Callable | dict[str, inspect.Parameter]): Function to inspect or its parameters
         args (Any): Positional arguments.
         kwargs (Any): Keyword arguments.
 
@@ -202,8 +203,8 @@ def map_signature(
     )
 
     names = list(params)
-    var_pos: Optional[tuple[int, str]] = None
-    var_key: Optional[tuple[int, str]] = None
+    var_pos: tuple[int, str] | None = None
+    var_key: tuple[int, str] | None = None
     mapped: dict[str, Any] = {}
 
     for i, (name, param) in enumerate(params.items()):
@@ -234,12 +235,15 @@ def map_graph_module_signature(
     *args: Any,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Maps the args and kwargs to the parameters of the forward method of a graph module
-    generated by `owlite.fx.symbolic_trace`. If the graph module doesn't have meta data 'original_params',
-    automatically falls back to `map_signature`.
+    """Map arguments and keyword arguments to the parameters of a graph module's forward method.
+
+    This function maps the provided args and kwargs to the parameters of the forward method of a graph module
+    generated by owlite.fx.symbolic_trace. If the graph module does not have metadata named 'original_params',
+    it automatically falls back to using map_signature.
+
 
     Args:
-        module (GraphModule): a graph module generated by `owlite.fx.symbolic_trace`
+        module (GraphModule): a graph module
         args (Any): Positional arguments.
         kwargs (Any): Keyword arguments.
 

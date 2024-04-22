@@ -5,7 +5,7 @@ import numpy as np
 
 # pylint: disable=invalid-name
 class DType(Enum):
-    """The enum for specifying available np.dtype objects"""
+    """The enum for specifying available np.dtype objects."""
 
     FLOAT16 = np.dtype("float16")
     FLOAT32 = np.dtype("float32")

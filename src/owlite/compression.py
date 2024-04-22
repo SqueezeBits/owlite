@@ -1,4 +1,6 @@
-r"""Quantization is a powerful technique used to reduce the storage and computational requirements of deep learning
+r"""Calibration optimizes quantization parameters for minimizing error while preserving model accuracy.
+
+Quantization is a powerful technique used to reduce the storage and computational requirements of deep learning
 models. However, this reduction in precision can potentially hurt model accuracy. Calibration is a crucial step in
 quantization that helps mitigate this accuracy loss.
 
@@ -20,15 +22,15 @@ from torch.fx.node import Node
 
 from .backend.fx.node import find_constant_nodes
 from .backend.fx.node_configurator import NodeConfigurator
-from .backend.fx.transforms import fuse_linear_bn_with_quantized_bias
-from .enums import OwLiteStatus
+from .backend.fx.transforms import fuse_linear_bn_with_quantized_bias, qconv_bn_to_qconvbn
+from .enums import ModelStatus
 from .nn import FakeQuantizer, enable_quantizers
 from .options.compression_option import CompressionOptions, FakeQuantizerConfig
 from .owlite_core.logger import log
 
 
 def compress(model: GraphModule, option: CompressionOptions) -> GraphModule:
-    """Quantizes the model with the specification described in options.
+    """Quantize the model with the specification described in options.
 
     This function inserts quantizers with the quantization options specified in the options,
     substitutes them with the Quantized module, and performs post-processing. The linear module
@@ -46,17 +48,17 @@ def compress(model: GraphModule, option: CompressionOptions) -> GraphModule:
     Returns:
         GraphModule: Compressed model.
     """
-
     if not isinstance(model, GraphModule):
         raise TypeError("Only GraphModule instance can be quantized with `owlite.quantize`")
     configure(model, option)
     fuse_linear_bn_with_quantized_bias(model)
+    qconv_bn_to_qconvbn(model)
     enable_quantizers(model)
     return model
 
 
 def configure(graph_module: GraphModule, option: CompressionOptions) -> None:
-    """Configures the input model to a quantized model based on the provided options.
+    """Configure the input model to a quantized model based on the provided options.
 
     Args:
         graph_module (GraphModule): The model to be compressed.
@@ -73,7 +75,7 @@ def configure(graph_module: GraphModule, option: CompressionOptions) -> None:
     graph_module.graph.lint()
     graph_module.graph.eliminate_dead_code()
     graph_module.recompile()
-    graph_module.meta["owlite_status"] = OwLiteStatus.COMPRESSED
+    graph_module.meta["status"] = ModelStatus.COMPRESSED
     try:
         graph_module.to(next(graph_module.parameters()).device)
     except StopIteration:
@@ -81,7 +83,7 @@ def configure(graph_module: GraphModule, option: CompressionOptions) -> None:
 
 
 def add_fake_quantizers(graph_module: GraphModule, fake_quantizer_config: FakeQuantizerConfig) -> None:
-    """Adds necessary fake quantizer submodules to the graph module according to the fake quantizer config.
+    """Add necessary fake quantizer submodules to the graph module according to the fake quantizer config.
 
     Args:
         graph_module (GraphModule): the graph module where new fake quantizer submodules are to be added

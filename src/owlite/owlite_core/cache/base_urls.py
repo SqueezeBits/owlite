@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 from ..constants import (
@@ -25,8 +23,8 @@ class BaseURLs(BaseModel):
     DOVE: str = Field(default=OWLITE_DOVE_API_BASE_URL)
     NEST: str = Field(default=NEST_URL)
 
-    def set(self, name: str, url: Optional[str] = None) -> None:
-        """Sets the given URL to input value or its default value.
+    def set(self, name: str, url: str | None = None) -> None:
+        """Set the given URL to input value or its default value.
 
         Args:
             name (str): The name of the URL to reset.

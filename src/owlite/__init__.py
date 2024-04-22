@@ -18,6 +18,19 @@ _import_structure = {
     "enums": [
         "PTQCalibrationType",
         "QATBackwardType",
+        "Runtime",
+    ],
+    "nn": [
+        "FakePerChannelQuantizer",
+        "FakePerTensorQuantizer",
+        "FakeQuantizer",
+        "QConv1d",
+        "QConv2d",
+        "QConv3d",
+        "QLinear",
+        "QConvBn1d",
+        "QConvBn2d",
+        "QConvBn3d",
     ],
     "options": [
         "Channel",
@@ -39,7 +52,19 @@ if TYPE_CHECKING:
         calibrate,
     )
     from .compression import compress
-    from .enums import PTQCalibrationType, QATBackwardType
+    from .enums import PTQCalibrationType, QATBackwardType, Runtime
+    from .nn import (
+        FakePerChannelQuantizer,
+        FakePerTensorQuantizer,
+        FakeQuantizer,
+        QConv1d,
+        QConv2d,
+        QConv3d,
+        QConvBn1d,
+        QConvBn2d,
+        QConvBn3d,
+        QLinear,
+    )
     from .options import (
         Channel,
         CompressionOptions,

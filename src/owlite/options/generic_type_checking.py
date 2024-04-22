@@ -2,8 +2,8 @@ from types import NoneType
 from typing import Any, Union, get_args, get_origin
 
 
-def generic_isinstance(obj: Any, type_hint: Union[type, tuple[type]]) -> bool:
-    """An extension for the builtin function `isinstance` for type hint checking."""
+def generic_isinstance(obj: Any, type_hint: type | tuple[type]) -> bool:
+    """Extend the built-in function `isinstance` for type hint checking."""
     if isinstance(type_hint, tuple):
         return any(generic_isinstance(obj, t) for t in type_hint)
 
@@ -22,8 +22,8 @@ def generic_isinstance(obj: Any, type_hint: Union[type, tuple[type]]) -> bool:
     raise NotImplementedError(f"generic_isinstance for {type_hint} is not implemented.")
 
 
-def generic_issubclass(type_hint: type, superclass: Union[type, tuple[type]]) -> bool:
-    """An extension for the builtin function `issubclass` for type hint checking."""
+def generic_issubclass(type_hint: type, superclass: type | tuple[type]) -> bool:
+    """Extend the built-in function `issubclass` for type hint checking."""
     if isinstance(superclass, tuple):
         return any(generic_issubclass(type_hint, s) for s in superclass)
 
@@ -39,7 +39,7 @@ def generic_issubclass(type_hint: type, superclass: Union[type, tuple[type]]) ->
 
 
 def is_optional(type_hint: type) -> bool:
-    """Checks if the type hint is wrapped with Optional"""
+    """Check if the type hint is wrapped with Optional."""
     if get_origin(type_hint) is not Union:
         return False
     args = get_args(type_hint)
@@ -47,7 +47,7 @@ def is_optional(type_hint: type) -> bool:
 
 
 def unwrap_optional(type_hint: type) -> type:
-    """Unwraps the Optional from the type hint if it is wrapped"""
+    """Unwrap the Optional from the type hint if it is wrapped."""
     if not is_optional(type_hint):
         return type_hint
     return [arg for arg in get_args(type_hint) if arg is not NoneType][0]

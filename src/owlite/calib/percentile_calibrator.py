@@ -24,11 +24,12 @@ class PercentileCalibrator(HistogramCalibrator):
     """
 
     def __init__(self, quantizer: "FakeQuantizer", percentile: float):
-        """Initializes the percentile calibrator.
+        """Initialize the percentile calibrator.
 
         Args:
             quantizer (FakeQuantizer): The `FakeQuantizer` module to be calibrated.
             percentile(float): The desired percentile value, ranging from 0 to 100.
+
         Raises:
             ValueError: If the percentile is outside the valid range [0, 100].
         """
@@ -38,7 +39,7 @@ class PercentileCalibrator(HistogramCalibrator):
         self.percentile = percentile
 
     def update(self) -> None:
-        """Updates step_size using "`percentile`"."""
+        """Update step_size using "`percentile`"."""
         super().update()
         assert isinstance(self.hook_handler, RemovableHandle)
 
@@ -46,14 +47,22 @@ class PercentileCalibrator(HistogramCalibrator):
         _deterministic_enable_status = torch.are_deterministic_algorithms_enabled()
         torch.use_deterministic_algorithms(False, warn_only=True)
 
-        for chn, _ in enumerate(self.histc_bins):
-            total = self.histogram[chn].data.sum()
-            cdf = torch.cumsum(self.histogram[chn].data / total, 0)
-            idx = torch.searchsorted(cdf, self.percentile / 100)
-            per_max = self.bin_edges[chn].data[idx]
-            self.quantizer.step_size.data[chn] = (
-                (per_max / self.quantizer.maxabs_bound).detach().to(self.quantizer.step_size.device)
-            )
+        max_values = torch.empty_like(self.quantizer.step_size)
+        min_values = torch.empty_like(self.quantizer.step_size)
+        for chn, _ in enumerate(self.histograms):
+            total = self.histograms[chn].data.sum()
+            cdf = torch.cumsum(self.histograms[chn].data / total, 0)
+            if self.quantizer.symmetric:
+                idx = torch.searchsorted(cdf, self.percentile / 100)
+                per_max = self.bin_edges[chn].data[idx]
+                max_values[chn] = per_max
+            else:
+                min_idx = torch.searchsorted(cdf, (1 - self.percentile / 100) * 0.5)
+                max_idx = torch.searchsorted(cdf, (1 + self.percentile / 100) * 0.5)
+                max_values[chn] = self.bin_edges[chn][max_idx].data
+                min_values[chn] = self.bin_edges[chn][min_idx].data
+
+        self.update_fake_quantizer_param_with_max_min(max_values, min_values)
 
         # allocate deterministic algorithms to original state
         torch.use_deterministic_algorithms(_deterministic_enable_status, warn_only=True)

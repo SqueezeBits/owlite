@@ -9,7 +9,7 @@ from .types import TorchTarget
 
 
 def torch_targets(fn_name: str) -> list[TorchTarget]:
-    """Finds all torch.* function targets with given fn_name
+    """Find all torch.* function targets with given fn_name.
 
     Args:
         fn_name (str): torch function name to find (e.g. "randn" for targeting torch.randn)

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch.utils.hooks import RemovableHandle
@@ -15,33 +15,27 @@ class HistogramCalibrator(Calibrator, ABC):
     """Histogram Calibrator Class.
 
     Attributes:
-        histogram(`list[torch.Tensor]`): list of histogram counts. Each element defaults to [0, ..., 0], len = 2048.
-        bin_edges(`list[torch.Tensor]`): histogram edges. Each element defaults to [0, ..., 0], len = 2048.
-        histc_bins(`list[torch.Tensor]`): number of histogram bins. Each element defaults to 2048.
+        histograms(`list[torch.Tensor]`): list of histogram counts. Each element defaults to [0, ..., 0], len = 2048.
+        bin_edges(`list[torch.Tensor]`): histogram edges. Each element defaults to [0, ..., 0], len = 2049.
     """
 
     def __init__(self, quantizer: "FakeQuantizer"):
-        """Initializes for histogram calibrator"""
+        """Initialize for histogram calibrator."""
         super().__init__(quantizer)
-        self.histogram: list[torch.Tensor] = []
+        self.histograms: list[torch.Tensor] = []
         self.bin_edges: list[torch.Tensor] = []
-        self.histc_bins: list[torch.Tensor] = []
 
     def prepare(self) -> RemovableHandle:
-        """Defines forward hook function."""
+        """Prepare forward hook function."""
 
-        def histogram_forward_hook_func(module: "FakeQuantizer", inputs: tuple[Any, ...], output: Any) -> Optional[Any]:
-            """Forward hook function to get histogram value"""
-
+        def histogram_forward_hook_func(module: "FakeQuantizer", inputs: tuple[Any, ...], output: Any) -> Any | None:
+            """Forward hook function to get histogram value."""
             assert isinstance(module.calibrator, HistogramCalibrator)
             calibrator = module.calibrator
             assert self.check_calib_ready()
 
-            if any(len(hist_attr) == 0 for hist_attr in (self.histogram, self.bin_edges, self.histc_bins)):
-                log.error(
-                    f"`histogram`: {calibrator.histogram}\n`bin_edge`: {calibrator.bin_edges}\n"
-                    f"`histc_bins`: {calibrator.histc_bins}"
-                )
+            if any(len(hist_attr) == 0 for hist_attr in (self.histograms, self.bin_edges)):
+                log.error(f"`histogram`: {calibrator.histograms}\n`bin_edge`: {calibrator.bin_edges}")
                 raise ValueError("During calibration, calibration attributions are not initialized")
 
             _input = inputs[0].clone()
@@ -66,39 +60,10 @@ class HistogramCalibrator(Calibrator, ABC):
                 # _histc_cuda does not have a deterministic implementation
                 _deterministic_enable_status = torch.are_deterministic_algorithms_enabled()
                 torch.use_deterministic_algorithms(False, warn_only=True)
-
-                for i, val in enumerate(new_input):
-                    local_max = val.abs().max().clone().to(calibrator.bin_edges[i].device)
-                    if calibrator.histogram[i].data.sum() == 0 and calibrator.bin_edges[i].data.sum() == 0:
-                        calibrator.histogram[i].data = torch.histc(
-                            val.abs(),
-                            bins=int(calibrator.histc_bins[i].data),
-                            min=0,
-                            max=float(local_max),
-                        ).to(calibrator.histogram[i].device)
-                        calibrator.bin_edges[i].data = torch.linspace(
-                            0, float(local_max), int(calibrator.histc_bins[i].data) + 1
-                        ).to(calibrator.bin_edges[i].device)
-                    else:
-                        if module.per_channel:
-                            break
-                        if local_max > calibrator.bin_edges[i].data[-1]:
-                            interval = calibrator.bin_edges[i].data[1] - calibrator.bin_edges[i].data[0]
-                            calibrator.histc_bins[i].data = torch.Tensor([int((local_max / interval).ceil().item())])
-                            calibrator.bin_edges[i].data = torch.arange(
-                                0,
-                                float(local_max + interval),
-                                float(interval),
-                                device=calibrator.bin_edges[i].device,
-                            )
-                        local_hist = torch.histc(
-                            val.abs(),
-                            bins=int(calibrator.histc_bins[i].data),
-                            min=0,
-                            max=float(calibrator.bin_edges[i].data[-1]),
-                        ).to(calibrator.bin_edges[i].device)
-                        local_hist[: calibrator.histogram[i].data.numel()] += calibrator.histogram[i].data
-                        calibrator.histogram[i].data = local_hist
+                if module.symmetric:
+                    _accumulate_input_to_abs_histogram(calibrator, new_input)
+                else:
+                    _accumulate_input_to_histogram(calibrator, new_input)
 
                 # allocate deterministic algorithms to original state
                 torch.use_deterministic_algorithms(_deterministic_enable_status, warn_only=True)
@@ -115,16 +80,15 @@ class HistogramCalibrator(Calibrator, ABC):
             channel_size = 1
         device = self.quantizer.step_size.device
 
-        if any(len(hist_attr) != 0 for hist_attr in (self.histogram, self.bin_edges, self.histc_bins)):
+        if any(len(hist_attr) != 0 for hist_attr in (self.histograms, self.bin_edges)):
             log.error(
                 "The histogram attributions are already set before the calibration is prepared.\n"
-                f"`histogram`: {self.histogram}\n`bin_edges`: {self.bin_edges}\n`histc_bins`: {self.histc_bins}"
+                f"`histogram`: {self.histograms}\n`bin_edges`: {self.bin_edges}"
             )
             raise ValueError("The histogram attributions are already set before the calibration is prepared")
 
-        self.histogram = [torch.zeros(_histogram_size).to(device) for _ in range(channel_size)]
+        self.histograms = [torch.zeros(_histogram_size).to(device) for _ in range(channel_size)]
         self.bin_edges = [torch.zeros(_histogram_size + 1).to(device) for _ in range(channel_size)]
-        self.histc_bins = [torch.Tensor([_histogram_size]).to(device) for _ in range(channel_size)]
 
         self.hook_handler = self.quantizer.register_forward_hook(histogram_forward_hook_func)
         return self.hook_handler
@@ -132,17 +96,69 @@ class HistogramCalibrator(Calibrator, ABC):
     @abstractmethod
     def update(self) -> None:
         assert self.check_calib_ready()
-        if any(len(hist_attr) == 0 for hist_attr in (self.histogram, self.bin_edges, self.histc_bins)):
-            log.error(f"`histogram`: {self.histogram}\n `bin_edge`: {self.bin_edges}\n `histc_bins`: {self.histc_bins}")
+        if any(len(hist_attr) == 0 for hist_attr in (self.histograms, self.bin_edges)):
+            log.error(f"`histogram`: {self.histograms}\n `bin_edge`: {self.bin_edges}")
             raise ValueError("During calibration, calibration attributions are not initialized")
 
     def clear(self) -> None:
-        """Clears attributes of histogram(`histogram`, `bin_edges`, `histc_bins`) and registered forward_hook"""
+        """Clear attributes of histogram(`histogram`, `bin_edges`) and registered forward_hook."""
         assert isinstance(self.hook_handler, RemovableHandle)
-        self.histogram.clear()
+        self.histograms.clear()
         self.bin_edges.clear()
-        self.histc_bins.clear()
 
         # remove registered forward_hook
         self.hook_handler.remove()
         self.hook_handler = None
+
+
+def _accumulate_input_to_abs_histogram(calibrator: HistogramCalibrator, inputs: list[torch.Tensor]) -> None:
+    for i, val in enumerate(inputs):
+        local_max = val.abs().max().item()
+        histogram_tensor = calibrator.histograms[i]
+        bin_edge = calibrator.bin_edges[i]
+        histc_bin = len(histogram_tensor)
+        if histogram_tensor.sum() == 0 and bin_edge.sum() == 0:
+            histogram_tensor.data = torch.histc(val.abs(), bins=histc_bin, min=0, max=local_max).to(
+                histogram_tensor.device
+            )
+            bin_edge.data = torch.linspace(0, local_max, histc_bin + 1).to(bin_edge.device)
+        elif calibrator.quantizer.per_channel:
+            break
+        else:
+            if local_max > bin_edge[-1]:
+                interval = (bin_edge[1] - bin_edge[0]).item()
+                histc_bin = int(round(local_max / interval))
+                bin_edge.data = torch.arange(0, local_max + interval, interval, device=bin_edge.device)
+            local_hist = torch.histc(val.abs(), histc_bin, 0, float(bin_edge[-1])).to(histogram_tensor.device)
+            local_hist[: histogram_tensor.numel()] += histogram_tensor.data
+            histogram_tensor.data = local_hist
+
+
+def _accumulate_input_to_histogram(calibrator: HistogramCalibrator, inputs: list[torch.Tensor]) -> None:
+    for i, val in enumerate(inputs):
+        local_max = val.max().item()
+        local_min = val.min().item()
+        histogram_tensor = calibrator.histograms[i]
+        bin_edge = calibrator.bin_edges[i]
+        histc_bin = len(histogram_tensor)
+        if histogram_tensor.sum() == 0 and bin_edge.sum() == 0:
+            histogram_tensor.data = torch.histc(val, bins=histc_bin, min=local_min, max=local_max).to(
+                histogram_tensor.device
+            )
+            bin_edge.data = torch.linspace(local_min, local_max, histc_bin + 1).to(bin_edge.device)
+        elif calibrator.quantizer.per_channel:
+            break
+        else:
+            min_index = 0
+            if local_max > bin_edge[-1] or local_min < bin_edge[0]:
+                interval = (bin_edge[1] - bin_edge[0]).item()
+                min_index = int(max(torch.ceil((bin_edge[0] - local_min) / interval).item(), 0))
+                new_min = (bin_edge[0] - min_index * interval).item()
+                new_max = max(local_max, bin_edge[-1].item())
+                bin_edge.data = torch.arange(new_min, new_max + interval, interval, device=bin_edge.device)
+                histc_bin = len(bin_edge) - 1
+            local_hist = torch.histc(val, histc_bin, float(bin_edge[0]), float(bin_edge[-1])).to(
+                histogram_tensor.device
+            )
+            local_hist[min_index : min_index + histogram_tensor.numel()] += histogram_tensor.data
+            histogram_tensor.data = local_hist

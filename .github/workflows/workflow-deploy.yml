@@ -74,4 +74,4 @@ jobs:
           -H "Authorization: Bearer ${{ secrets.TOKEN }}" \
           -H "X-GitHub-Api-Version: 2022-11-28" \
           ${{ secrets.DOC_ACTION_URL }} \
-          -d '{"ref":"main","inputs":{"source":"${{ inputs.target-branch }}","target":"main","msg":"${{ inputs.release-title }} [${{ format('v{0}', inputs.version) }}]"}}'
+          -d '{"ref":"main","inputs":{"source":"master","target":"main","msg":"${{ inputs.release-title }} [${{ inputs.version }}]"}}'

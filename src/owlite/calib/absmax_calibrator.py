@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch.utils.hooks import RemovableHandle
@@ -29,14 +29,13 @@ class AbsmaxCalibrator(Calibrator):
 
     def __init__(self, quantizer: "FakeQuantizer"):
         super().__init__(quantizer)
-        self.absmax: Optional[torch.Tensor] = None
+        self.absmax: torch.Tensor | None = None
 
     def prepare(self) -> RemovableHandle:
-        """Defines forward hook function."""
+        """Prepare the forward hook function."""
 
-        def absmax_forward_hook_func(module: "FakeQuantizer", inputs: tuple[Any, ...], output: Any) -> Optional[Any]:
-            """forward hook function to get absmax value"""
-
+        def absmax_forward_hook_func(module: "FakeQuantizer", inputs: tuple[Any, ...], output: Any) -> Any | None:
+            """Forward hook function to get absmax value."""
             calibrator = module.calibrator
             assert isinstance(calibrator, AbsmaxCalibrator)
 
@@ -52,7 +51,7 @@ class AbsmaxCalibrator(Calibrator):
                     stacklevel=2,
                 )
                 module.invert_signedness()
-
+            # pylint:disable=duplicate-code
             _input = inputs[0].clone()
             with torch.no_grad():
                 if module.channel is not None:
@@ -64,6 +63,7 @@ class AbsmaxCalibrator(Calibrator):
                     new_absmax = _input.abs().max().clone()
                 calibrator.absmax.data = torch.maximum(new_absmax.to(calibrator.absmax.device), calibrator.absmax).data
             return output
+            # pylint:enable=duplicate-code
 
         # ~define forward hook function
         self.absmax = torch.zeros_like(self.quantizer.step_size.data).to(self.quantizer.step_size.device)
@@ -73,14 +73,14 @@ class AbsmaxCalibrator(Calibrator):
         return self.hook_handler
 
     def update(self) -> None:
-        """Updates step_size using "`absmax`"."""
+        """Update `self.step_size` using `self.absmax`."""
         assert self.absmax is not None
         assert self.quantizer.step_size.data.shape == self.absmax.shape
         if not self.check_calib_ready():
             raise RuntimeError("Not all conditions for calibration were not met.")
         assert isinstance(self.hook_handler, RemovableHandle)
 
-        self.quantizer.step_size.data = (self.absmax / self.quantizer.maxabs_bound).detach()
+        self.update_fake_quantizer_param_with_max_min(self.absmax)
 
         # remove registered forward_hook
         self.hook_handler.remove()

@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch.utils.hooks import RemovableHandle
@@ -11,10 +11,16 @@ if TYPE_CHECKING:
 
 
 class MinmaxCalibrator(Calibrator):
-    """Minmax Calibrator Class.
+    r"""Minmax Calibrator Class.
 
-    Minmax calibration to set step_size and zero_point using min-max during calibration
-    with asymmetric quantization.
+    The MinMaxCalibration calibrator stores the **maximum value** and **minimum value** encountered in the passed data,
+    utilizing this value as the quantization range. When the original data is represented by $$X$$,
+    the `step_size` and `zero_point` are caculated as:
+
+    $$
+        \text{step\_size}=\frac{\max_{x \\in X}(x) - \min_{x \\in X}(x) }{\text{quant\_max}-\text{quant\_min}} \\
+        \text{zero\_point} = - \frac{\min_{x \\in X}(x)}{\text{step\_size}} + \text{quant\_min}
+    $$
 
     Attributes:
         max_value (`torch.Tensor`, `optional`): maximum value of data passing through the quantizer.
@@ -23,8 +29,8 @@ class MinmaxCalibrator(Calibrator):
 
     def __init__(self, quantizer: "FakeQuantizer"):
         super().__init__(quantizer)
-        self.max_value: Optional[torch.Tensor] = None
-        self.min_value: Optional[torch.Tensor] = None
+        self.max_value: torch.Tensor | None = None
+        self.min_value: torch.Tensor | None = None
 
     def check_calib_ready(self) -> bool:
         if self.quantizer.symmetric:
@@ -34,9 +40,8 @@ class MinmaxCalibrator(Calibrator):
 
     def prepare(self) -> RemovableHandle:
         # define forward hook function
-        def minmax_forward_hook_func(module: "FakeQuantizer", inputs: tuple[Any, ...], output: Any) -> Optional[Any]:
-            """forward hook function to get minmax value"""
-
+        def minmax_forward_hook_func(module: "FakeQuantizer", inputs: tuple[Any, ...], output: Any) -> Any | None:
+            """Forward hook function to get minmax value."""
             calibrator = module.calibrator
             assert isinstance(calibrator, MinmaxCalibrator)
             assert self.check_calib_ready()
@@ -45,7 +50,7 @@ class MinmaxCalibrator(Calibrator):
                 raise ValueError(
                     "During calibration, calibration attributions should be initialized, but None was provided"
                 )
-
+            # pylint:disable=duplicate-code
             _input = inputs[0].clone()
             with torch.no_grad():
                 if module.channel is not None:
@@ -63,6 +68,7 @@ class MinmaxCalibrator(Calibrator):
                 calibrator.min_value.data = torch.minimum(
                     new_min.to(calibrator.min_value.device), calibrator.min_value
                 ).data
+            # pylint:enable=duplicate-code
             return output
 
         # ~define forward hook function
@@ -93,15 +99,9 @@ class MinmaxCalibrator(Calibrator):
                 "During preparing calibration, calibration attributions should be initialized, but None was provided"
             )
 
-        # update step_size using "min & max value"
-        self.quantizer.step_size.data = (
-            (self.max_value - self.min_value) / (self.quantizer.quant_max - self.quantizer.quant_min)
-        ).detach()
+        self.update_fake_quantizer_param_with_max_min(self.max_value, self.min_value)
 
-        # update zero_point
-        self.quantizer.zero_point.data = self.min_value - (self.quantizer.quant_min * self.quantizer.step_size.data)
-
-        # set  "min_value" and "max_value" attritbutions to `None`
+        # set "min_value" and "max_value" attritbutions to `None`
         self.max_value, self.min_value = None, None
 
         # remove registered forward_hook

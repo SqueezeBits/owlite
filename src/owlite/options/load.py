@@ -1,29 +1,30 @@
 import json
 import os
-from typing import Any, Union
+from typing import Any
 
+from packaging.version import Version
 from yacs.config import CfgNode
 
 
-def check_version(cls: Any, d: Any) -> None:
-    """Checks version compatibility
+def check_version(cls: Any, d: dict[str, Any]) -> None:
+    """Check version compatibility.
 
     Args:
         cls (Any): `OptionsMixin` or `OptionsDict` class to load data to
-        d (Any): the data to load
+        d (dict[str, Any]): the data to load
 
     Raises:
-        TypeError: When class version and data version doesn't match
+        TypeError: When class version doesn't match with data version
     """
-    if cls_version := getattr(cls, "__version__", None):
-        d_version = d.pop("version", "1.0")  # assume version 1.0 for data before format versioning
+    if isinstance((cls_version := getattr(cls, "__version__", None)), Version):
+        d_version = Version(d.get("version", "1.0"))  # assume version 1.0 for data before format versioning
 
         if cls_version != d_version:
             raise TypeError(f"Version mismatch, cls({cls_version}) != data({d_version})")
 
 
-def load_json_or_yaml(path_or_string_literal: str) -> Union[dict, CfgNode]:
-    """Loads either json or CfgNode from the given string.
+def load_json_or_yaml(path_or_string_literal: str) -> dict | CfgNode:
+    """Load either json or CfgNode from the given string.
 
     Args:
         path_or_string_literal (str): a string object containing either
@@ -46,7 +47,7 @@ def load_json_or_yaml(path_or_string_literal: str) -> Union[dict, CfgNode]:
         else:
             data = CfgNode.load_cfg(path_or_string_literal)
 
-    if not isinstance(data, (dict, CfgNode)):
+    if not isinstance(data, dict | CfgNode):
         raise TypeError(f"Expected either dict or CfgNode, but {data} of type {type(data)} is loaded.")
 
     return data

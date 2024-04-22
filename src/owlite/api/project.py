@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class Project:
-    """The OwLite project"""
+    """The OwLite project."""
 
     id: str
     name: str
@@ -24,21 +24,21 @@ class Project:
 
     @property
     def url(self) -> str:
-        """The URL to the project page"""
+        """The URL to the project page."""
         return f"{OWLITE_FRONT_BASE_URL}/project/detail/{self.id}"
 
     @property
     def home(self) -> str:
-        """The directory path for writing outputs produced by this project"""
+        """The directory path for writing outputs produced by this project."""
         return os.path.join(OWLITE_HOME, self.name)
 
     @classmethod
-    def create(cls, name: str, description: Optional[str] = None) -> Self:
-        """Creates a new project
+    def create(cls, name: str, description: str | None = None) -> Self:
+        """Create a new project.
 
         Args:
             name (str): The name for the project to be created
-            description (Optional[str], optional): Optional description for the project. Defaults to None.
+            description (str | None, optional): Optional description for the project. Defaults to None.
 
         Raises:
             RuntimeError: When the project is not created for an unexpected reason.
@@ -64,12 +64,12 @@ class Project:
         return project
 
     @classmethod
-    def load_or_create(cls, name: str, description: Optional[str] = None) -> Self:
-        """Loads the existing project named `name` if found, creates a new one otherwise.
+    def load_or_create(cls, name: str, description: str | None = None) -> Self:
+        """Load the existing project named `name` if found, creates a new one otherwise.
 
         Args:
             name (str): The name of the project to be loaded or created
-            description (Optional[str], optional): Optional description that will be used only when a new project is
+            description (str | None, optional): Optional description that will be used only when a new project is
                 created. Defaults to None.
 
         Raises:
@@ -88,8 +88,5 @@ class Project:
                 return project
             raise e
 
-    def __repr__(self) -> str:
-        return f"project '{self.name}'"
-
     def __str__(self) -> str:
-        return self.__repr__()
+        return f"project '{self.name}'"
