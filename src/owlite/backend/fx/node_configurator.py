@@ -118,9 +118,6 @@ class NodeConfigurator:
                         continue
                     edge = edge_type(self.node, key, input_option.tensor)  # type: ignore[abstract]
                     edge.insert("call_module", input_option.fake_quantizer_name)
-                    fake_quantizer = graph_module.get_submodule(input_option.fake_quantizer_name)
-                    if not isinstance(fake_quantizer, FakeQuantizer):
-                        continue
                 except (IndexError, ValueError, KeyError, RuntimeError) as e:
                     log.error(
                         f"Failed to insert fake quantizer ({e})\nNote:\n"

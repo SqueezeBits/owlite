@@ -1,5 +1,4 @@
 import json
-import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
@@ -7,7 +6,7 @@ from requests.exceptions import HTTPError
 from typing_extensions import Self
 
 from ..owlite_core.api_base import MAIN_API_BASE
-from ..owlite_core.constants import OWLITE_FRONT_BASE_URL, OWLITE_HOME
+from ..owlite_core.constants import OWLITE_FRONT_BASE_URL, OWLITE_HOME_PATH
 from ..owlite_core.logger import log
 
 if TYPE_CHECKING:
@@ -30,7 +29,7 @@ class Project:
     @property
     def home(self) -> str:
         """The directory path for writing outputs produced by this project."""
-        return os.path.join(OWLITE_HOME, self.name)
+        return str(OWLITE_HOME_PATH / self.name)
 
     @classmethod
     def create(cls, name: str, description: str | None = None) -> Self:

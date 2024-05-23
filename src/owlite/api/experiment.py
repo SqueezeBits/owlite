@@ -51,7 +51,8 @@ class Experiment(Benchmarkable):
         """The configuration for this experiment."""
         try:
             resp = DOVE_API_BASE.post(
-                "/compile", json=self.payload(format_version=str(FX_CONFIGURATION_FORMAT_VERSION))
+                "/compile",
+                json=self.payload(format_version=str(FX_CONFIGURATION_FORMAT_VERSION), **self.version_payload),
             )
         except requests.exceptions.HTTPError as e:
             if e.response and e.response.status_code == 403:
@@ -200,7 +201,7 @@ class Experiment(Benchmarkable):
         try:
             file_dest_url = MAIN_API_BASE.post(
                 "/projects/runs/data/upload",
-                json=self.payload(input_shape=self.input_signature.dumps()),
+                json=self.payload(input_shape=self.input_signature.dumps(), **self.version_payload),
             )
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 400:

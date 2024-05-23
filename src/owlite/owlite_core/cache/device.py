@@ -1,5 +1,5 @@
 from functools import cached_property
-from typing import Any, ClassVar
+from typing import Any
 
 import requests
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
@@ -19,15 +19,13 @@ class DeviceManager(BaseModel):
         url (str): The URL of the device manager.
     """
 
-    CHECK_URL_ON_INIT: ClassVar[bool] = True
-
     name: str
     url: str
 
     def model_post_init(self, __context: Any) -> None:
         super().model_post_init(__context)
-        if self.CHECK_URL_ON_INIT:
-            _ = self.devices
+        devices = self.devices
+        log.debug(f"Devices at {self.name}({self.url})\n{devices}")
 
     @cached_property
     def devices(self) -> dict[str, "Device"]:

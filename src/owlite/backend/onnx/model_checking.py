@@ -175,7 +175,7 @@ def compare(
         input_shapes = {}
     onnx.checker.check_model(model_opt)
     for i in range(n_times):
-        print(f"Checking {i}/{n_times}...")
+        log.debug(f"Checking {i}/{n_times}...")
         if input_data is None:
             inputs = generate_rand_input(model_opt, input_shapes=input_shapes)
         else:

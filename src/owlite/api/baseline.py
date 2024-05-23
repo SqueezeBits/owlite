@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 import onnx
 import requests
+import torch
+from packaging.version import Version
 from torch.fx.graph_module import GraphModule
 from typing_extensions import Self
 
@@ -13,6 +15,7 @@ from ..backend.fx import serialize
 from ..backend.signature import Signature
 from ..owlite_core.api_base import DOVE_API_BASE, MAIN_API_BASE
 from ..owlite_core.cache.device import Device
+from ..owlite_core.constants import OWLITE_VERSION
 from ..owlite_core.logger import log
 from .benchmarkable import Benchmarkable
 from .project import Project
@@ -54,9 +57,15 @@ class Baseline(Benchmarkable):
         Returns:
             Baseline: The created baseline
         """
+        extra_payload = {
+            "framework": device.runtime.value,
+            "owlite_version": str(OWLITE_VERSION),
+            "torch_version": str(torch.__version__),
+        }
+
         resp = MAIN_API_BASE.post(
             "/projects/baselines",
-            json=Baseline(name=name, project=project, device=device).payload(framework=device.runtime.value),
+            json=Baseline(name=name, project=project, device=device).payload(**extra_payload),
         )
         assert isinstance(resp, dict)
         name_from_resp = resp["baseline_name"]
@@ -79,7 +88,8 @@ class Baseline(Benchmarkable):
             device (Device): The device for which the baseline is being loaded.
 
         Raises:
-            e (requests.exceptions.HTTPError): When unexpected error has been thrown.
+            requests.exceptions.HTTPError: When the server responded with an unexpected status code.
+            RuntimeError: When loading a baseline created in a different environment.
 
         Returns:
             Baseline | None: the existing baseline if found, `None` otherwise.
@@ -95,6 +105,27 @@ class Baseline(Benchmarkable):
             raise e
 
         assert isinstance(resp, dict)
+
+        baseline_owlite_version = Version(resp["owlite_version"] or "0.0.0")
+        baseline_torch_version = Version(resp["torch_version"] or "0.0.0")
+        current_torch_version = Version(str(torch.__version__))
+
+        if baseline_owlite_version != OWLITE_VERSION or baseline_torch_version != current_torch_version:
+            detail = (
+                f"\n{baseline_owlite_version}(baseline OwLite version) != {OWLITE_VERSION}(current OwLite version)"
+                if baseline_owlite_version != OWLITE_VERSION
+                else ""
+            )
+            detail += (
+                f"\n{baseline_torch_version}(baseline PyTorch version) != {torch.__version__}(current PyTorch version)"
+                if baseline_torch_version != current_torch_version
+                else ""
+            )
+            log.error(
+                "It seems like you are trying to load a baseline created in an incompatible environment. "
+                f"Please check your current environment and try again{detail}"
+            )  # UX
+            raise RuntimeError("Version mismatch")
 
         input_signature = Signature.from_str(resp["input_shape"]) if resp["input_shape"] else None
         baseline = cls(
@@ -121,6 +152,7 @@ class Baseline(Benchmarkable):
                 gm=serialize(model),
                 onnx=base64.b64encode(proto.SerializeToString()).decode("utf-8"),
                 input_shape=self.input_signature.dumps(),
+                **self.version_payload,
             ),
         )
 

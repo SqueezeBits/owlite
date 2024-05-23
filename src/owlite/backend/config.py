@@ -3,8 +3,9 @@ import os
 # Flag to disable automatic object monkey patching
 DISABLE_AUTO_PATCH = os.environ.get("OWLITE_DISABLE_AUTO_PATCH", "0") == "1"
 
-# Flag to enforce module output(return value of forward) consistency between before and after trace.
-FORCE_OUTPUT_COMPATIBILITY = os.environ.get("OWLITE_FORCE_OUTPUT_COMPATIBILITY", "1") == "1"
+# Flag to enforce graph module consistency between the module before trace and the graph module after trace.
+# Turning this flag off should only be done for debugging purpose as OwLite model checking logic will fail without this.
+FORCE_GRAPH_MODULE_COMPATIBILITY = os.environ.get("OWLITE_FORCE_GRAPH_MODULE_COMPATIBILITY", "1") == "1"
 
 # Maximum iteration limit for ONNX transformations.
 ONNX_TRANSFORM_MAXIMUM_ITERATION = int(os.environ.get("OWLITE_ONNX_TRANSFORM_MAXIMUM_ITERATION", 100))

@@ -12,7 +12,6 @@ from torch.nn.parallel import DataParallel, DistributedDataParallel
 
 from .api import Baseline, Experiment, Project
 from .backend.fx.trace import symbolic_trace
-from .backend.signature import Signature
 from .compression import compress
 from .options import DynamicAxisOptions, DynamicInputOptions, ONNXExportOptions
 from .owlite_core.cli.device import connect_to_first_available_device
@@ -288,7 +287,7 @@ class OwLite:
 
         self.module_args = args
         self.module_kwargs = kwargs
-        self.target.input_signature = Signature.from_module(model, args, kwargs)
+        self.target.input_signature = model.meta["input_signature"]
 
         if isinstance(self.target, Experiment):
             if self.target.input_signature != self.target.baseline.input_signature:
@@ -505,6 +504,7 @@ class OwLite:
     def benchmark(
         self,
         dynamic_input_options: DynamicInputOptions | dict[str, dict[str, int]] | None = None,
+        download_engine: bool = True,
     ) -> None:
         r"""Execute the benchmark for the converted model on a connected device.
 
@@ -536,6 +536,8 @@ class OwLite:
             * KEY (`str`): the name of an input tensor.
             * VALUE (`dict[str, int]`): the dynamic range setting dictionary containing `"min"`, `"opt"`, `"max"`,
                 `"test"` dimension size settings.
+            download_engine (`bool`, optional): Whether to wait until the benchmarking is finished to download
+                the engine. Defaults to True.
 
         Raises:
             TypeError: When the `model` is an instance of `torch.nn.DataParallel` or `torch.nn.DistributedDataParallel`.
@@ -546,25 +548,38 @@ class OwLite:
 
         `owl.benchmark` goes through the following steps:
 
-        1. Uploading The Model's Weights: It uploads the ONNX weight file to the device manager.
+        1. Uploading The Model's Weights: It uploads the ONNX weight file to the device manager only for paid plan user.
 
         2. Creating A Runtime Engine: It converts the model into the runtime engine format (e.g. TensorRT engine)
         compatible with the device's runtime if necessary.
 
-        3. Benchmarking on Device : It benchmarks the runtime engine on the device associated with the
+        3. Benchmarking on Device: It benchmarks the runtime engine on the device associated with the
         current baseline or experiment. When finished, it return the benchmarking results including latency, which will
         be displayed on the terminal.
 
-            > **Interrupting the Benchmarking Process**
-            > If the benchmarking process appears to be time-consuming, an interruption can be initiated with ctrl-c.
-            This action triggers an exit message, indicating the cessation of the current experiment on your end.
-            However, the benchmarking process continues on the connected device.
-            A URL link is also provided, guiding to the OwLite website for further project configuration.
-            Please note that the benchmark is still accessible on the connected device after the interruption,
-            enabling a return to the process when convenient. However, manual retrieval of the engine will not be
-            possible after the interruption.
+        4. Downloading The Runtime Engine: The runtime engine file will be downloaded to the user's workspace. (paid
+        plan only)
 
-        3. Downloading The Runtime Engine: The runtime engine file will be downloaded to the user's workspace.
+        Notes:
+        **Benchmarking Considerations for Free Plan Users**
+        >
+        Benchmarking a model typically involves uploading its weight files for the most accurate results. However, if you're on the OwLite free plan, uploading weight files isn't currently supported. To address this, OwLite automatically generates random weights for your model's ONNX graph, allowing you to benchmark without needing your own weights. It's important to keep in mind that benchmarks using randomly generated weights might be less accurate compared to those using your actual model weights.
+        >
+        **Interrupting Benchmarking**
+        >
+        The benchmarking process can be interrupted at any time by pressing Ctrl+C. This will gracefully terminate
+        the current experiment on your machine and display an exit message.
+
+        * Early Interruption: If the interruption occurs before the model weights are uploaded, the benchmarking process
+        on the device will also be aborted.
+        * Late Interruption: If the interruption occurs after the model weights are uploaded, the benchmarking process
+        will continue on the connected device. In either case, you'll be provided with a URL linking to the OwLite
+        website for further project configuration.
+
+        > Important Notes:
+        The benchmark will still be accessible on the connected device after interruption, allowing you to resume the
+        process later at your convenience. However, please be aware that manual engine retrieval will not be possible
+        after interrupting the process.
 
         Examples:
         **Baseline Mode (or Experiment Mode with Static Batch Size)**
@@ -684,7 +699,7 @@ class OwLite:
             dynamic_input_options = DynamicInputOptions(dynamic_input_options)
             self.target.input_signature.fill_dynamic_ranges(dynamic_input_options)
 
-        self.target.orchestrate_benchmark()
+        self.target.orchestrate_benchmark(download_engine=download_engine)
 
     def log(self, **kwargs: Any) -> None:
         """Record and send specific metrics to the server.
@@ -881,7 +896,7 @@ def init(
 
     OwLite stores files, such as ONNX or TensorRT engine, generated from your code at
     `${OWLITE_HOME}/<project>/<baseline>/<experiment>`, where OWLITE_HOME is an environment variable
-    that defaults to the current working directory ` . `.
+    that defaults to ` ./owlite `.
 
     3. Targeting A Device:
     If you want your baseline or experiment to target a different device from the one configured via OwLite CLI, use the

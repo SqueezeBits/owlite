@@ -5,6 +5,8 @@ from typing import Any
 from packaging.version import Version
 from yacs.config import CfgNode
 
+from ..owlite_core.logger import log
+
 
 def check_version(cls: Any, d: dict[str, Any]) -> None:
     """Check version compatibility.
@@ -20,7 +22,10 @@ def check_version(cls: Any, d: dict[str, Any]) -> None:
         d_version = Version(d.get("version", "1.0"))  # assume version 1.0 for data before format versioning
 
         if cls_version != d_version:
-            raise TypeError(f"Version mismatch, cls({cls_version}) != data({d_version})")
+            if cls_version.major == d_version.major and cls_version.minor == d_version.minor:
+                log.debug_warning(f"Micro version mismatch, cls({cls.__name__})({cls_version}) != data({d_version})")
+            else:
+                raise TypeError(f"Version mismatch, cls({cls.__name__})({cls_version}) != data({d_version})")
 
 
 def load_json_or_yaml(path_or_string_literal: str) -> dict | CfgNode:

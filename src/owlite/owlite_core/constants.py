@@ -1,8 +1,9 @@
 import os
+from pathlib import Path
 
 from packaging.version import Version
 
-OWLITE_HOME = os.path.join(os.getenv("OWLITE_HOME", os.path.join(os.getcwd(), "owlite")))
+OWLITE_HOME_PATH = Path(os.getenv("OWLITE_HOME", os.path.join(os.getcwd(), "owlite"))).resolve()
 
 OWLITE_REPORT_URL = "https://tally.so/r/mOl5Zk"
 
@@ -18,4 +19,4 @@ OWLITE_API_DEFAULT_TIMEOUT = int(os.environ.get("OWLITE_API_DEFAULT_TIMEOUT", "1
 
 FX_CONFIGURATION_FORMAT_VERSION = Version("1.2")
 OWLITE_SETTINGS_FORMAT_VERSION = Version("2.0")
-OWLITE_VERSION = Version("1.2.4")
+OWLITE_VERSION = Version("2.0.0")

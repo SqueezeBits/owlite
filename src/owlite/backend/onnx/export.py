@@ -1,4 +1,5 @@
 """An alternative for torch.onnx.export with extra optimizations."""
+
 # pylint: disable=protected-access
 import io
 import os
@@ -22,6 +23,7 @@ from ...enums import ModelStatus
 from ...nn import FakeQuantizer
 from ...nn.functions import clq_function
 from ...options import DynamicAxisOptions
+from ...owlite_core.constants import OWLITE_VERSION
 from ...owlite_core.logger import log
 from ..fx.transforms import clip_narrow_range_weights, fuse_bn
 from ..signature import Signature
@@ -33,7 +35,7 @@ from ..utils import (
 )
 from .dynamize import dynamize
 from .export_with_external_data import export_with_external_data
-from .model_checking import compare  # type: ignore
+from .model_checking import compare
 from .transforms import apply_onnx_transforms
 
 # Large models (e.g. SwinTransformer) requires
@@ -312,7 +314,7 @@ def export(
     )
 
     if skipped_optimizers is None:
-        skipped_optimizers = ["fuse_qkv"]
+        skipped_optimizers = ["fuse_qkv", "fuse_consecutive_log_softmax"]
 
     onnx_proto = optimize_function(
         onnx_proto,
@@ -326,7 +328,7 @@ def export(
     if dynamic_axis_options is not None:
         onnx_proto = dynamize(onnx_proto, dynamic_axis_options)
 
-    onnx_proto.producer_name = f"owlite + {onnx_proto.producer_name}"
+    onnx_proto.producer_name = f"owlite {OWLITE_VERSION} + {onnx_proto.producer_name}"
     onnx_proto.doc_string = "Processed by OwLite"
 
     model_dir = os.path.dirname(f)
@@ -448,16 +450,23 @@ def _optimize(
             if len([*modified_proto.graph.node]) == 0:
                 log.warning("All nodes are constant-folded by onnxsim.")
     except Exception as e:
-        log.warning(f"ONNX simplifier failed with error: {e}")
+        log.warning(f"ONNX simplifier failed with error: {e}")  # UX
+        log.error(
+            "This model cannot be compressed by OwLite. Please resolve the above error from onnx-simplifier."
+        )  # UX
 
     if apply_transforms:
         modified_proto = apply_onnx_transforms(modified_proto)
 
     if modified_proto is not onnx_proto:
         log.debug("Checking modified model")
-        ok = compare(modified_proto, onnx_proto, n_times=check_n)
-        if not ok:
-            log.warning("The output has been changed after the optimization")
+        try:
+            ok = compare(modified_proto, onnx_proto, n_times=check_n)
+            if not ok:
+                log.warning("The output has been changed after the optimization")
+        except Exception as e:
+            log.warning(f"Failed to compare optimized ONNX against the original one - {e}")
+            ok = False
 
     return modified_proto
 
@@ -506,7 +515,10 @@ def _optimize_path(
                 if len([*modified_proto.graph.node]) == 0:
                     log.warning("All nodes are constant-folded by onnxsim.")
         except Exception as e:
-            log.warning(f"ONNX simplifier failed with error: {e}")
+            log.warning(f"ONNX simplifier failed with error: {e}")  # UX
+            log.error(
+                "This model cannot be compressed by OwLite. Please resolve the above error from onnx-simplifier."
+            )  # UX
 
         if apply_transforms:
             transformed_output_path = os.path.join(tempdir, "transformed_model.onnx")
@@ -515,9 +527,13 @@ def _optimize_path(
 
         if modified_proto is not onnx_proto:
             log.debug("Checking modified model")
-            ok = compare(simplified_output_path, output_path, check_n, None, None, None)
-            if not ok:
-                log.warning("The output has been changed after the optimization")
+            try:
+                ok = compare(simplified_output_path, output_path, check_n, None, None, None)
+                if not ok:
+                    log.warning("The output has been changed after the optimization")
+            except Exception as e:
+                log.warning(f"Failed to compare optimized ONNX against the original one - {e}")
+                ok = False
         return modified_proto
 
 
@@ -550,6 +566,9 @@ def get_default_input_names(module: torch.nn.Module, onnx_export_args: tuple[Any
     Returns:
         list[str]: the list of input names in string.
     """
+    if isinstance(module, GraphModule) and (input_signature := module.meta.get("input_signature", None)):
+        return list(input_signature.keys())
+
     args: tuple[Any, ...]
     kwargs: dict[str, Any]
     if isinstance(onnx_export_args, torch.Tensor):
@@ -561,8 +580,8 @@ def get_default_input_names(module: torch.nn.Module, onnx_export_args: tuple[Any
             args, kwargs = onnx_export_args[:-1], onnx_export_args[-1]
         else:
             args, kwargs = onnx_export_args, {}
-    input_shape_signature = Signature.from_module(module, args, kwargs)
-    return list(input_shape_signature.keys())
+    input_signature = Signature.from_module(module, args, kwargs)
+    return list(input_signature.keys())
 
 
 def check_fake_quantization_condition(model: GraphModule) -> bool:

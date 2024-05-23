@@ -10,13 +10,18 @@ from onnx import ModelProto
 from torch.fx.graph_module import GraphModule
 from typing_extensions import Self
 
+from ..enums import ModelStatus
 from ..options import DynamicAxisOptions, DynamicInputOptions
 from ..owlite_core.logger import log
-from .utils import normalize_parameter_name
 
 
+# TODO(huijong): replace this class with inspect.Signature
 class Signature(dict[str, list[int | str | list[int]]]):
     """The input signature of a model."""
+
+    def __init__(self, *args: Any, unused_param_names: list[str] | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.unused_param_names = unused_param_names or []
 
     def __str__(self) -> str:
         return self.dumps()
@@ -58,6 +63,9 @@ class Signature(dict[str, list[int | str | list[int]]]):
     ) -> Self:
         """Create the signature from a module and inputs provided for its forward method.
 
+        Parameters that are not used in given module's graph will not appear in the mapped signature if given
+        module is an instance of `torch.nn.GraphModule`.
+
         Args:
             module (torch.nn.Module): A module.
             args (tuple[Any, ...]): Arguments to be provided for the module's forward method.
@@ -67,12 +75,22 @@ class Signature(dict[str, list[int | str | list[int]]]):
         Returns:
             Signature: The created `Signature` object.
         """
-        if isinstance(module, GraphModule):
-            signature_map = map_graph_module_signature(module, *args, **kwargs)
-        else:
-            signature_map = map_signature(module.forward, *args, **kwargs)
+        # This lazy import is required for avoiding circular import error
+        # pylint: disable-next=import-outside-toplevel
+        from .fx.node import find_placeholders
 
-        signature = cls()
+        signature_map = map_signature(module.forward, *args, **kwargs)
+
+        unused_param_names = []
+        if isinstance(module, GraphModule) and (module.meta.get("status", None) == ModelStatus.TRACED):
+            keys = list(signature_map.keys())
+            placeholders = find_placeholders(module.graph)
+            unused_param_names = [
+                sig_key for sig_key, placeholder_node in zip(keys, placeholders) if not placeholder_node.users
+            ]
+            signature_map = {k: v for k, v in signature_map.items() if k not in unused_param_names}
+
+        signature = cls(unused_param_names=unused_param_names)
         for name, value in signature_map.items():
             if isinstance(value, torch.Tensor):
                 signature[name] = list(value.shape)
@@ -107,6 +125,69 @@ class Signature(dict[str, list[int | str | list[int]]]):
         """
         # Cast the return value of json.loads to a dictionary for backwards compatibility.
         return cls(dict(json.loads(string)))
+
+    def warn_signature_change(self, original_params_dict: dict[str, inspect.Parameter]) -> None:
+        """Warn users for any differences compared to the given original parameters.
+
+        Args:
+            original_params_dict (dict[str, inspect.Parameter]): a parameter dictionary to compare to.
+        """
+        if len(self) == len(original_params_dict):
+            return
+
+        indent4 = " " * 4
+        indent8 = " " * 8
+        unused_but_required_flag = False
+
+        def red(s: str) -> str:
+            return f"\033[91m{s}\033[0m"
+
+        def yellow(s: str) -> str:
+            return f"\u001b[33m{s}\033[0m"
+
+        def strikethrough(s: str) -> str:
+            return "\u0336".join((*s, ""))
+
+        def as_snippet(param: inspect.Parameter, is_last: bool) -> str:
+            nonlocal unused_but_required_flag
+
+            default_exists = param.default is not inspect.Parameter.empty
+
+            snippet = f"{param.name}={param.default}" if default_exists else param.name
+            comment = ""
+            if param.name not in self and param.name not in self.unused_param_names:  # removed
+                snippet = red(strikethrough(snippet))
+                comment = "is removed"
+
+            elif param.name in self.unused_param_names:  # kept but unused
+                snippet = yellow(snippet)
+                epilog = "and optional" if default_exists else f"but {red('required')}"
+                unused_but_required_flag = unused_but_required_flag or not default_exists
+                comment = f"is unused {epilog}"
+
+            snippet = f"{indent8}{snippet}{'' if is_last else ','}"
+            if comment:
+                snippet += f"  # <--- {comment}"
+            return snippet
+
+        params_snippet = "\n".join(
+            as_snippet(param, i == len(original_params_dict) - 1)
+            for i, param in enumerate(original_params_dict.values())
+        )
+        code_snippet = f"{indent4}def forward(\n{indent8}self,\n{params_snippet}\n{indent4}):\n{indent8}..."
+        extra_instruction = ""
+
+        if unused_but_required_flag:
+            extra_instruction = (
+                "However, you might still need to provide some of the unused parameters to the model "
+                "in order to synchronize the input signature with the original model. "
+            )
+        log.warning(
+            "The model has unused parameters (i.e. inputs that does not affect model's output(s)). "
+            f"{extra_instruction}"
+            "See the comments in the following code snippet for more details:\n"
+            f"{code_snippet}"
+        )
 
     def dumps(self) -> str:
         """Dump signature to string.
@@ -228,72 +309,3 @@ def map_signature(
         mapped[name] = val
 
     return mapped
-
-
-def map_graph_module_signature(
-    module: GraphModule,
-    *args: Any,
-    **kwargs: Any,
-) -> dict[str, Any]:
-    """Map arguments and keyword arguments to the parameters of a graph module's forward method.
-
-    This function maps the provided args and kwargs to the parameters of the forward method of a graph module
-    generated by owlite.fx.symbolic_trace. If the graph module does not have metadata named 'original_params',
-    it automatically falls back to using map_signature.
-
-
-    Args:
-        module (GraphModule): a graph module
-        args (Any): Positional arguments.
-        kwargs (Any): Keyword arguments.
-
-    Returns:
-        dict[str, Any]: the mapped signatures
-    """
-    if (original_params := module.meta.get("original_params", None)) is None:
-        log.debug_warning("This graph module has no meta data 'original_params'")
-        return map_signature(module.forward, *args, **kwargs)
-    modified_params = {normalize_parameter_name(k): v for k, v in inspect.signature(module.forward).parameters.items()}
-    mapped_signature = map_signature(original_params, *args, **kwargs)
-    signature_map: dict[str, Any] = {}
-    for p, (k, v) in enumerate(mapped_signature.items()):
-        if k in modified_params:
-            signature_map[k] = v
-            continue
-        if isinstance(v, tuple):
-            # variadic positional arguments are flattened by torch.compile
-            # e.g. `def forward(self, *args, x)` -> `def forward(self, args_0, args_1, x)`
-            # or `def forward(self, args_0_, args_1_, x)`
-            # when two arguments are provided by the user, depending on torch version and the host OS
-            success = True
-            for i, x in enumerate(v):
-                for name in (f"{k}_{i}", f"{k}_{i}_"):
-                    if name in modified_params:
-                        signature_map[name] = x
-                        break
-                else:
-                    success = False
-                    log.debug_warning(
-                        f"Failed to map {i}-th variadic positional argument {k} of the graph module's forward method"
-                    )
-            if success:
-                continue
-        if isinstance(v, dict):
-            # variadic keyword arguments are flattened by torch.compile
-            # e.g. `def forward(self, x, **kwargs)` -> `def forward(self, x, y, z)`
-            # when the model was called as `output = model(a, y=b, z=c)`
-            for name, x in v.items():
-                if name in modified_params:
-                    signature_map[name] = x
-                else:
-                    log.debug_warning(
-                        f"Failed to map the variadic positional argument {k} with key {name} "
-                        "of the graph module's forward method"
-                    )
-            continue
-        if any(arg_name in modified_params for arg_name in (f"args_{p}", f"args_{p}_")):
-            # Rarely, arguments can be squashed as a variadic position argument `args`
-            signature_map[k] = v
-            continue
-        log.debug_warning(f"Failed to map signature of {p}-th parameter {k} of the graph module's forward method")
-    return signature_map

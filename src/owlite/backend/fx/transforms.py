@@ -1,6 +1,4 @@
-import inspect
 from collections.abc import Callable
-from typing import Any
 
 import torch
 from torch.fx.graph_module import GraphModule
@@ -19,26 +17,21 @@ from ...nn.modules import (
     UnaryNeuralQModuleMixin,
 )
 from ...owlite_core.logger import log
-from ..signature import Signature
-from ..utils import get_most_common_device, nodestr, normalize_parameter_name
+from ..utils import get_most_common_device
 from .batchnorm_fusion_helper import (
     fuse_by_patterns,
     fuse_conv_bn_eval,
     fuse_linear_bn_eval,
     replace_call_module_node_target,
 )
-from .node import find_placeholders, get_target_module
+from .node import get_target_module
 
-GraphModuleTransform = (
-    Callable[[GraphModule], GraphModule] | Callable[[GraphModule, tuple[Any, ...], dict[str, Any]], GraphModule]
-)
+GraphModuleTransform = Callable[[GraphModule], GraphModule]
 GRAPH_MODULE_TRANSFORMS: dict[str, GraphModuleTransform] = {}
 
 
 def apply_graph_module_transforms(
     graph_module: GraphModule,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
 ) -> GraphModule:
     """Apply all registered graph module transforms.
 
@@ -52,11 +45,7 @@ def apply_graph_module_transforms(
     """
     for name, transform in GRAPH_MODULE_TRANSFORMS.items():
         log.debug(f"Applying graph module transform: {name}")
-        graph_module = (
-            transform(graph_module)  # type: ignore[call-arg]
-            if len(inspect.signature(transform).parameters) == 1
-            else transform(graph_module, args, kwargs)  # type: ignore[call-arg]
-        )
+        graph_module = transform(graph_module)
     graph_module.recompile()
     return graph_module
 
@@ -76,69 +65,6 @@ def register_graph_module_transform(
         log.debug_warning(f"Overwriting existing GraphModule transform: {name}")
     GRAPH_MODULE_TRANSFORMS[name] = transform
     return transform
-
-
-@register_graph_module_transform
-def fix_input_parameter_names(graph_module: GraphModule) -> GraphModule:
-    """Make the names of parameters of graph_module's forward method same as the original module.
-
-    Note that this transform does nothing when torch<2.1.0.
-
-    Args:
-        graph_module (GraphModule): the input graph module
-
-    Returns:
-        GraphModule: graph module with inputs renamed
-    """
-    for node in find_placeholders(graph_module.graph):
-        if not isinstance(node.target, str):
-            continue
-        target = normalize_parameter_name(node.target)
-        if node.target != target:
-            log.debug(f"Renaming placeholder {node.target} -> {target}")
-            node.target = target
-    return graph_module
-
-
-@register_graph_module_transform
-def fix_forward_argument_ordering(
-    graph_module: GraphModule,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-) -> GraphModule:
-    """Reorder graph module input arguments to meet the ordering in original module.
-
-    Args:
-        graph_module (GraphModule): the input graph module
-        args (tuple[Any, ...]): arguments to be provided for the module's forward method
-        kwargs (dict[str, Any]): keyword arguments to be provided for the module's forward method
-
-    Returns:
-        GraphModule: graph module with inputs reordered
-    """
-    graph = graph_module.graph
-    names = list(Signature.from_module(graph_module, args, kwargs).keys())
-    log.debug(f"Names from signature: {names}")
-
-    placeholders = find_placeholders(graph)
-    log.debug(f"Original placeholders: {[nodestr(p) for p in placeholders]}")
-
-    def get_index(node: Node) -> int:
-        if isinstance((target := node.target), str) and target in names:
-            return names.index(target)
-        return len(names)
-
-    placeholders = [*sorted(placeholders, key=get_index, reverse=True)]
-    log.debug(f"Reverse-sorted placeholders: {[nodestr(p) for p in placeholders]}")
-
-    for placeholder in placeholders:
-        with graph.inserting_before():
-            reordered_placeholder = graph.placeholder(f"{placeholder.name}_reordered")
-            reordered_placeholder.target = placeholder.target
-            placeholder.replace_all_uses_with(reordered_placeholder)
-            graph.erase_node(placeholder)
-
-    return graph_module
 
 
 @register_graph_module_transform

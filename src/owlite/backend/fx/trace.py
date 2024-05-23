@@ -1,230 +1,29 @@
 # pylint: disable=protected-access, too-many-statements
 import inspect
-import logging
-import sys
-import traceback
-from collections import OrderedDict
-from collections.abc import Callable, Iterable, Sequence
-from typing import Any, Literal
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import torch
 import torch._dynamo as torch_dynamo
-from torch import Tensor
-from torch.fx import Node
-from torch.fx.graph_module import GraphModule, _WrappedCall
+import torch.utils._pytree as pytree
+from torch import _guards
+from torch._dispatch.python import enable_python_dispatcher
+from torch.fx.graph_module import GraphModule
 from torch.nn.parallel import DataParallel, DistributedDataParallel
 
 from ...enums import ModelStatus
 from ...owlite_core.logger import log
-from ..config import FORCE_OUTPUT_COMPATIBILITY
-from ..signature import map_signature
+from ..config import FORCE_GRAPH_MODULE_COMPATIBILITY
+from ..signature import Signature
 from ..utils import (
     get_most_common_device,
     get_most_common_floating_point_type,
     move_tensors_to,
 )
-from .node import find_the_output_node
 from .transforms import apply_graph_module_transforms
 
-ForwardParamStatus = Literal["alive", "kept", "purged"]
 
-
-# pylint: disable-next=missing-class-docstring, too-few-public-methods
-class BackendProvider:
-    def __init__(self) -> None:
-        self.graph_module: GraphModule | None = None
-
-    def __call__(self, graph_module: GraphModule, inputs: Sequence[Tensor]) -> Callable[..., Tensor]:
-        self.graph_module = graph_module
-        return graph_module.forward
-
-
-# pylint: disable-next=missing-class-docstring, too-few-public-methods
-class TensorPlaceholder:
-    pass
-
-
-def extract_structure(nested_tensor: Any) -> Any:
-    """Extract nested structure of given nested tensor.
-
-    Args:
-        nested_tensor (Any): Tensor nested in arbitrary data structure.
-
-    Raises:
-        ValueError: When `nested_tensor` contains any other objects than
-            `Tensor`, `tuple`, `list`, `OrderedDict` and `dict`.
-
-    Returns:
-        Any: The `nested_tensor` but, occurrences of `Tensor` replaced with `TensorPlaceHolder`.
-    """
-
-    def _extract_structure(obj: Any) -> Any:
-        if isinstance(obj, Tensor):
-            return TensorPlaceholder()
-        if isinstance(obj, tuple):
-            return tuple(_extract_structure(e) for e in obj)
-        if isinstance(obj, list):
-            return [_extract_structure(e) for e in obj]
-        if isinstance(obj, OrderedDict):
-            return OrderedDict({key: _extract_structure(val) for (key, val) in obj.items()})
-        if isinstance(obj, dict):
-            return {key: _extract_structure(val) for (key, val) in obj.items()}
-
-        raise TypeError(f"Cannot extract structure from an object of type: {type(obj)}")
-
-    return _extract_structure(nested_tensor)
-
-
-def flatten_output(output: Iterable | Tensor | Node) -> list[Tensor | Node]:
-    """Flatten the output of `nn.Module` or the argument of fx output node.
-
-    Args:
-        output (Iterable | Tensor | Node): The output to flatten.
-
-    Returns:
-        list[Tensor | Node]: The flattened output.
-
-    Notes:
-        This function assumes all nodes passed as an argument to fx output node produces
-        `Tensor` and the orderings of the outputs are preserved during `torch.compile`.
-    """
-    flattened_output: list[Tensor | Node] = []
-
-    def _extract_output(output: Iterable | Tensor | Node) -> None:
-        if isinstance(output, Tensor):
-            flattened_output.append(output)
-        elif isinstance(output, Node):
-            flattened_output.append(output)
-        elif isinstance(output, dict | OrderedDict):
-            for out in output.values():
-                _extract_output(out)
-        elif isinstance(output, Iterable):
-            for out in output:
-                _extract_output(out)
-
-    _extract_output(output)
-
-    return flattened_output
-
-
-def filter_output(graph_module_output: Any, original_output: Any) -> list[Node]:
-    """Filter the output of the graph module converted by `torch.compile` by the output from the original module.
-
-    Args:
-        graph_module_output (Any): The argument of fx output node to filter.
-        original_output (Any): The output of the original module before `torch.compile`.
-
-    Returns:
-        Any: The filtered and flattened output.
-    """
-    flattened_graph_module_output = flatten_output(graph_module_output)
-    flattened_original_output = flatten_output(original_output)
-
-    num_graph_module_output = len(flattened_graph_module_output)
-    num_original_output = len(flattened_original_output)
-
-    assert num_graph_module_output >= num_original_output
-
-    return flattened_graph_module_output[: len(flattened_original_output)]  # type: ignore
-
-
-# pylint: disable-next=missing-function-docstring
-def insert_output_adapter(graph_module: GraphModule, original_output: Any) -> GraphModule:
-    original_output_structure = extract_structure(original_output)
-
-    graph = graph_module.graph
-    output_node = find_the_output_node(graph)
-    filtered_graph_module_output = filter_output(output_node.args, original_output)
-
-    with graph.inserting_before(output_node):
-        output_adapter_func = create_output_adapter(original_output_structure)
-        adapter_node = graph.call_function(output_adapter_func, (filtered_graph_module_output,))
-        graph.output(adapter_node)
-
-        graph.erase_node(output_node)
-
-        graph.lint()
-        graph.eliminate_dead_code()
-        graph_module.recompile()
-
-    return graph_module
-
-
-# pylint: disable-next=missing-function-docstring
-def create_output_adapter(output_structure: Any) -> Callable[[Any], Any]:
-    def output_adapter(graph_module_out: list[Tensor]) -> Any:
-        # output adapter node will be transparent to torch.onnx.export(jit.trace)
-        if torch._C._get_tracing_state():  # pylint: disable=protected-access
-            return graph_module_out
-
-        # rearrange output to match with original structure
-        def _create_return(obj: Any) -> Any:
-            if isinstance(obj, TensorPlaceholder):
-                return graph_module_out.pop(0)
-            if isinstance(obj, tuple):
-                return tuple(_create_return(e) for e in obj)
-            if isinstance(obj, list):
-                return [_create_return(e) for e in obj]
-            if isinstance(obj, OrderedDict):
-                return OrderedDict({key: _create_return(val) for (key, val) in obj.items()})
-            if isinstance(obj, dict):
-                return {key: _create_return(val) for (key, val) in obj.items()}
-
-            return tuple(graph_module_out)
-
-        return _create_return(output_structure)
-
-    return output_adapter
-
-
-# pylint: disable-next=missing-function-docstring
-def patched_wrapped_call(self: Any, obj: GraphModule, *_args: Any, **_kwargs: Any) -> Any:
-    param_status: dict[str, ForwardParamStatus] = obj.meta.get("param_status", None)
-
-    if param_status:
-        ignored_keys = [name for name, status in param_status.items() if status != "alive"]
-        kwargs = {key: arg for key, arg in _kwargs.items() if key not in ignored_keys}
-
-        kept_names = [name for name, status in param_status.items() if status != "purged"]
-        args = tuple(
-            a for i, a in enumerate(_args) if i < len(kept_names) and param_status.get(kept_names[i]) == "alive"
-        )
-        if log.level <= logging.DEBUG:
-            log.debug(
-                f"{len(_kwargs) - len(kwargs)} out of {len(_kwargs)} kwargs dropped. "
-                f"({[key for key in ignored_keys if key in _kwargs]})"
-            )
-            dropped_indices = tuple(
-                i for i in range(len(_args)) if i < len(kept_names) and param_status[kept_names[i]] != "alive"
-            )
-            log.debug(f"{len(_args) - len(args)} out of {len(_args)} args dropped. ({dropped_indices})")
-    else:
-        args = _args
-        kwargs = _kwargs
-
-    # pylint: disable-next=broad-exception-caught
-    # ruff: noqa: B904
-    try:
-        if self.cls_call is not None:
-            return self.cls_call(obj, *args, **kwargs)
-        return super(self.cls, obj).__call__(*args, **kwargs)
-    except Exception as e:
-        assert e.__traceback__
-        topmost_framesummary: traceback.FrameSummary = traceback.StackSummary.extract(
-            traceback.walk_tb(e.__traceback__)
-        )[-1]
-        if "eval_with_key" in topmost_framesummary.filename:
-            print(
-                _WrappedCall._generate_error_message(topmost_framesummary),
-                file=sys.stderr,
-            )
-            raise e.with_traceback(None)
-        raise e
-
-
-_WrappedCall.__call__ = patched_wrapped_call  # type: ignore[method-assign]
-
-
+# pylint: disable-next=too-many-locals
 def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphModule:
     """Symbolically trace the input `model` to convert it into a GraphModule.
 
@@ -242,15 +41,16 @@ def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphMo
     Returns:
         GraphModule: the converted GraphModule.
     """
-    if not isinstance(model, torch.nn.Module):
-        raise TypeError(f"Expected torch.nn.Module instance but object of type {type(model)} given: {model}")
+    given_type = type(model)
     if isinstance(model, DataParallel | DistributedDataParallel):
-        _model_type = f"torch.nn.parallel.{type(model).__name__}"
         log.error(
-            f"{_model_type} is not supported by symbolic trace, please use 'attribute' module to unwrap model "
-            f"from {_model_type}. Try owlite.fx.symbolic_trace(model.module, ...)"
+            f"{given_type} is not supported by symbolic trace, please use 'attribute' module to unwrap model "
+            f"from {given_type}. Try owlite.fx.symbolic_trace(model.module, ...)"
         )
-        raise TypeError(f"{_model_type} is not supported by symbolic trace")
+
+    if not isinstance(model, torch.nn.Module):
+        raise TypeError(f"Expected torch.nn.Module instance but object of type {given_type} given: {model}")
+
     training_status = model.training
     # move input args and kwargs to model device
     device = get_most_common_device(model)
@@ -260,130 +60,101 @@ def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphMo
     args = move_tensors_to(args, device, dtype)
     kwargs = move_tensors_to(kwargs, device, dtype)
 
-    backend = BackendProvider()
-    torch_dynamo.reset()
-    optimized_model = torch.compile(model, fullgraph=True, backend=backend)
-    output = optimized_model(*args, **kwargs)
+    original_signature = inspect.signature(model.forward)
+    flat_args, in_spec = pytree.tree_flatten((args, kwargs))
+    graph_module: GraphModule | None = None
+    graph_captured_input = None
+    graph_captured_result: tuple[torch.Tensor, ...] | None = None
+    example_inputs: Sequence[Any] | None = None
+    fake_mode = None
 
-    graph_module = backend.graph_module
+    def dynamo_normalization_capturing_compiler(
+        gm: GraphModule, inner_example_inputs: Sequence[Any]
+    ) -> Callable[..., Any]:
+        nonlocal graph_module
+        assert (
+            graph_module is None
+        ), "Tried to emit a second graph during export. Tracing through 'f' must produce a single graph."
+        graph_module = gm
 
-    if graph_module is None:
-        raise RuntimeError("Failed to create torch.fx.GraphModule while running optimized model")
+        nonlocal fake_mode, example_inputs
+        # NB: do NOT pass inner_example_inputs here, we are detecting the
+        # Dynamo allocated fake mode, which should be DISTINCT from a
+        # potential outer ambient fake mode which the user provided.
+        # example_inputs is always the user specified inputs, so they
+        # would have the wrong fake mode attached to them
+        fake_mode = _guards.detect_fake_mode()
+        example_inputs = inner_example_inputs
 
-    try:
-        graph_module = insert_output_adapter(graph_module, output)
-    except TypeError as e:
-        if FORCE_OUTPUT_COMPATIBILITY:
-            log.error(
-                "Currently, OwLite can handle models whose output is a (possibly nested) `list`, `tuple`, `dict` or "
-                "`OrderedDict` of `Tensor` objects. You can ignore this error by setting the environment variable "
-                "OWLITE_FORCE_OUTPUT_COMPATIBILITY to 0. You can also overwrite the value by adding "
-                "`owlite.config.FORCE_OUTPUT_COMPATIBILITY=False` before conversion. However, by doing so, your "
-                "model's output can lose its nested structure and will be (usually) converted as a flattened `tuple` "
-                "of `Tensor` objects."
+        def result_capturing_wrapper(*graph_inputs: Any) -> Any:
+            nonlocal graph_captured_result
+            nonlocal graph_captured_input
+
+            graph_captured_input = graph_inputs
+            assert graph_module is not None
+
+            named_parameters = dict(graph_module.named_parameters(remove_duplicate=False))
+            named_buffers = dict(graph_module.named_buffers(remove_duplicate=False))
+
+            ambient_fake_mode = (
+                _guards.detect_fake_mode(graph_inputs)
+                if _guards.detect_fake_mode(graph_inputs) is not None
+                else fake_mode
             )
-            raise RuntimeError from e
 
-        log.warning(
-            "The converted model's output might lose its nested structure. (e.g. if your original model's output "
-            "was conformed with `tuple[Tensor, tuple[Tensor, Tensor]]`, the converted model's output will be "
-            "flattened as `tuple[Tensor, Tensor, Tensor]`.) This means that you might need to change your "
-            "training or inference code to use the converted model."
-        )
+            with ambient_fake_mode, enable_python_dispatcher():
+                params_and_buffers = {
+                    **dict(named_parameters),
+                    **dict(named_buffers),
+                }
+                fake_params_buffers = {}
 
-    original_params = {**inspect.signature(model.forward).parameters}
-    graph_module.meta["original_params"] = original_params
+                for name, value in params_and_buffers.items():
+                    fake_params_buffers[name] = ambient_fake_mode.from_tensor(value, static_shapes=True)
 
-    graph_module = apply_graph_module_transforms(graph_module, args, kwargs)
+                fake_graph_inputs = pytree.tree_map(ambient_fake_mode.from_tensor, graph_inputs)
+                graph_captured_result = torch.func.functional_call(graph_module, fake_params_buffers, fake_graph_inputs)
+
+            return graph_captured_result
+
+        return result_capturing_wrapper
+
+    torch_dynamo.eval_frame.remove_from_cache(model)
+    optimized_model = torch_dynamo.optimize_assert(backend=dynamo_normalization_capturing_compiler, export=True)(model)
+    output = optimized_model(*args, **kwargs)
+    torch_dynamo.eval_frame.remove_from_cache(model)
+
+    assert graph_module is not None, "Failed to create torch.fx.GraphModule while running optimized model"
+    assert example_inputs is not None
+
+    if FORCE_GRAPH_MODULE_COMPATIBILITY:
+        torch_dynamo.eval_frame.check_signature_rewritable(graph_module)
+
+        # pylint: disable-next=not-an-iterable
+        example_fake_inputs = [fake_mode.from_tensor(t) for t in example_inputs]  # type: ignore[union-attr]
+        rewrite_signature_args = [
+            original_signature,
+            graph_module,
+            fake_mode,
+            flat_args,
+            in_spec,
+            example_fake_inputs,
+            graph_captured_input,
+            graph_captured_result,
+            output,
+        ]
+        if torch.__version__ >= (2, 2, 0):  # type: ignore[operator]
+            flat_args_dynamic_dims: list[dict[str, Any]] = [{} for _ in flat_args]
+            rewrite_signature_args.append(flat_args_dynamic_dims)
+
+        # pylint: disable-next=no-value-for-parameter
+        graph_module = torch_dynamo.eval_frame.rewrite_signature(*rewrite_signature_args)
+
+    graph_module = apply_graph_module_transforms(graph_module)  # type: ignore[arg-type]
     graph_module.train(training_status)
     graph_module.meta["status"] = ModelStatus.TRACED
-
-    graph_module_params = {**inspect.signature(graph_module.forward).parameters}
-    log.debug(f"original_params: {[*original_params.keys()]}")
-    log.debug(f"graph_module_params: {[*graph_module_params.keys()]}")
-
-    if any(
-        param.kind in (inspect._ParameterKind.VAR_POSITIONAL, inspect._ParameterKind.VAR_KEYWORD)
-        for param in original_params.values()
-    ):
-        log.debug_warning("The original module has variadic positional or keyword argument")
-        return graph_module
-
-    if not all(name in original_params for name in graph_module_params):
-        log.debug_warning("torch.compile has completely renamed all parameters")
-        return graph_module
-
-    received_values = map_signature(model.forward, *args, **kwargs)
-    if log.level <= logging.DEBUG:
-        for name, val in received_values.items():
-            log.debug(f"{name}: {'empty' if val is inspect._empty else 'received'}")
-
-    param_status: dict[str, ForwardParamStatus] = {
-        name: ("alive" if name in graph_module_params else ("kept" if name in received_values else "purged"))
-        for name in original_params
-    }
-    if log.level <= logging.DEBUG:
-        for name, status in param_status.items():
-            log.debug(f"{name}: {status}")
-
-    graph_module.meta["param_status"] = param_status
-
-    if not param_status:
-        return graph_module
-
-    def warn_dropped_inputs() -> None:
-        indent4 = " " * 4
-        indent8 = " " * 8
-
-        def red(s: str) -> str:
-            return f"\033[91m{s}\033[0m"
-
-        def yellow(s: str) -> str:
-            return f"\u001b[33m{s}\033[0m"
-
-        def strikethrough(s: str) -> str:
-            return "\u0336".join((*s, ""))
-
-        def as_snippet(param: inspect.Parameter, status: ForwardParamStatus) -> str:
-            default_exists = has_default(param)
-            snippet = f"{param.name}={param.default}" if default_exists else param.name
-            comment: str | None = None
-            match status, default_exists:
-                case "alive", _:
-                    pass
-                case "kept", False:
-                    snippet = yellow(snippet)
-                    comment = f"will be ignored but {red('required')}"
-                case ("purged", _) | ("kept", True):
-                    snippet = red(strikethrough(snippet))
-                    comment = "will be ignored and optional"
-            snippet = f"{indent8}{snippet},"
-            if comment is not None:
-                snippet += f"  # <--- {comment}"
-            return snippet
-
-        def is_required(param: inspect.Parameter, status: ForwardParamStatus) -> bool:
-            return has_default(param) and status == "kept"
-
-        def has_default(param: inspect.Parameter) -> bool:
-            return param.default is not inspect._empty
-
-        params_snippet = "\n".join(as_snippet(param, param_status[name]) for name, param in original_params.items())
-        code_snippet = f"{indent4}def forward(\n{indent8}self,\n{params_snippet}\n{indent4}):\n{indent8}..."
-        extra_instruction = ""
-        if any(is_required(param, param_status[name]) for name, param in original_params.items()):
-            extra_instruction = (
-                "However, you might still need to provide some of the dropped inputs to the converted model "
-                "in order to synchronize the input signature with the original model. "
-            )
-        log.warning(
-            "The converted model has dropped inputs (i.e. inputs that does not affect model's output(s).) "
-            f"{extra_instruction}"
-            "See the comments in the following code snippet for more details:\n"
-            f"{code_snippet}"
-        )
-
-    if not all(status == "alive" for status in param_status.values()):
-        warn_dropped_inputs()
+    graph_module_input_signature = Signature.from_module(graph_module, args, kwargs)
+    graph_module_input_signature.warn_signature_change(dict(original_signature.parameters.items()))
+    graph_module.meta["input_signature"] = graph_module_input_signature
 
     return graph_module

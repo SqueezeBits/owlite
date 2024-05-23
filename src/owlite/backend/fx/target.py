@@ -98,7 +98,9 @@ DIV_TARGETS = (
     *all_torch_targets("true_divide"),
 )
 
-ARITHMETIC_TARGETS = (*ADD_TARGETS, *SUB_TARGETS, *MUL_TARGETS, *DIV_TARGETS)
+MOD_TARGETS = (operator.mod, operator.imod, *torch_targets("remainder"))
+
+ARITHMETIC_TARGETS = (*ADD_TARGETS, *SUB_TARGETS, *MUL_TARGETS, *DIV_TARGETS, *MOD_TARGETS)
 
 CONSTANT_TARGETS = (
     *torch_targets("zero_"),
@@ -119,9 +121,6 @@ CONSTANT_TARGETS = (
     *torch_targets("rand"),
     *torch_targets("randn"),
     *torch_targets("randint"),
-    *torch_targets("rand_like"),
-    *torch_targets("randn_like"),
-    *torch_targets("randint_like"),
     *torch_targets("arange"),
     *torch_targets("as_tensor"),
     *torch_targets("asarray"),
@@ -131,4 +130,9 @@ CONSTANT_TARGETS = (
     *torch_targets("from_numpy"),
     *torch_targets("hamming_window"),
     *torch_targets("hann_window"),
+    *torch_targets("kaiser_window"),
+    *torch_targets("linspace"),
+    *torch_targets("logspace"),
+    *torch_targets("numel"),
+    *torch_targets("scalar_tensor"),
 )

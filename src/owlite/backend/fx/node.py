@@ -54,6 +54,14 @@ def find_constant_nodes(graph: Graph) -> list[Node]:
     constant_nodes: list[Node] = []
     non_constant_nodes: list[Node] = []
 
+    def is_constant_getattr_node(node: Node) -> bool:
+        if node.op == "get_attr":
+            return True
+        if not (node.op == "call_function" and node.target is getattr):
+            return False
+        name = node.args[1] if len(node.args) > 1 else node.kwargs.get("name", None)
+        return name not in ("T",)
+
     def is_constant(node: Node) -> bool:
         if node in constant_nodes:
             return True
@@ -64,9 +72,10 @@ def find_constant_nodes(graph: Graph) -> list[Node]:
             non_constant_nodes.append(node)
             return False
 
-        is_getattr_node = (node.op == "call_function" and node.target is getattr) or node.op == "get_attr"
+        is_getattr_node = is_constant_getattr_node(node)
         is_constant_generating_node = node.op in ("call_function", "call_method") and node.target in CONSTANT_TARGETS
-        if is_getattr_node or len(node.all_input_nodes) == 0 or is_constant_generating_node:
+        is_missing_input_node = len(node.all_input_nodes) == 0
+        if any((is_getattr_node, is_missing_input_node, is_constant_generating_node)):
             constant_nodes.append(node)
             return True
 

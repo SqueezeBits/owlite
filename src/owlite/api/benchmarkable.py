@@ -9,6 +9,7 @@ from typing import Any
 
 import onnx
 import requests
+import torch
 from torch.fx.graph_module import GraphModule
 
 from ..backend.onnx.export import export
@@ -19,7 +20,7 @@ from ..options import DynamicAxisOptions, ONNXExportOptions
 from ..owlite_core.api_base import MAIN_API_BASE, APIBase
 from ..owlite_core.cache.device import Device
 from ..owlite_core.cli.api.login import whoami
-from ..owlite_core.constants import OWLITE_API_DEFAULT_TIMEOUT, OWLITE_REPORT_URL
+from ..owlite_core.constants import OWLITE_API_DEFAULT_TIMEOUT, OWLITE_REPORT_URL, OWLITE_VERSION
 from ..owlite_core.logger import log
 from ..owlite_core.owlite_device_settings import OWLITE_DEVICE_SETTINGS
 from ..owlite_core.owlite_settings import OWLITE_SETTINGS
@@ -88,6 +89,11 @@ class Benchmarkable:
     def engine_path(self) -> str:
         """The file path for writing the engine."""
         return os.path.join(self.home, f"{self.label}.engine")
+
+    @property
+    def version_payload(self) -> dict[str, str]:
+        """Current environment payload."""
+        return {"owlite_version": str(OWLITE_VERSION), "torch_version": str(torch.__version__)}
 
     @cached_property
     def benchmark_key(self) -> str:
@@ -159,8 +165,13 @@ class Benchmarkable:
         """
         raise NotImplementedError()
 
-    def orchestrate_benchmark(self) -> None:
-        """Orchestrate the end-to-end benchmark pipeline."""
+    def orchestrate_benchmark(self, download_engine: bool = True) -> None:
+        """Orchestrate the end-to-end benchmark pipeline.
+
+        Args:
+            download_engine (bool, optional): Whether to wait until the benchmarking is finished to download
+                the engine. Defaults to True.
+        """
         if self.device is None:
             log.warning(
                 "Cannot initiate benchmark. Please connect to a device first "
@@ -171,24 +182,26 @@ class Benchmarkable:
         log.info(f"Benchmark initiated for the {self}")  # UX
         self.request_benchmark()
         log.info(f"Benchmark requested on '{self.device}'")  # UX
-        self.poll_benchmark()
-
-        result = self.get_benchmark_result()
-        indent = " " * 14
-        log.info(
-            f"{type(self).__name__}: {result.name}\n"
-            f"{indent}Latency: {result.latency} (ms) on {result.device_name}\n"
-            f"{indent}For more details, visit {self.url}"
-        )  # UX
-        if self.plan.paid:
-            self.download_engine()
-        else:
+        if not self.plan.paid:
             log.info(
-                "Your current account plan (free) is not eligible for downloading engines. "
-                "Please consider upgrading your plan for the seamless experience that OwLite can provide. "
-                f"However, you can still convert the ONNX at {self.onnx_path} into a engine by yourself"
+                "Your account is not eligible for downloading the runtime engine. "
+                f"Please consider upgrading your plan or using the ONNX at {self.onnx_path} to deploy it "
+                "on a runtime of your choice."
             )  # UX
-        self.clear_engine()
+            return
+
+        self.poll_benchmark(wait_for_the_results=download_engine)
+
+        if download_engine:
+            result = self.get_benchmark_result()
+            indent = " " * 14
+            log.info(
+                f"{type(self).__name__}: {result.name}\n"
+                f"{indent}Latency: {result.latency} (ms) on {result.device_name}\n"
+                f"{indent}For more details, visit {self.url}"
+            )  # UX
+            self.download_engine()
+            self.clear_engine()
 
     def request_benchmark(self) -> None:
         """Request benchmark.
@@ -248,88 +261,106 @@ class Benchmarkable:
 
         upload_file_to_url(self.bin_path, bin_url)
 
-    def poll_benchmark(self) -> None:
+    def abort_benchmark(self) -> None:
+        """Abort the requested benchmark on the device.
+
+        Raises:
+            HTTPError: When request was not successful.
+        """
+        res = DEVICE_API_BASE.post(
+            "/devices/jobs/abort",
+            json={
+                "device_name": self.device.name,
+                "benchmark_key": self.benchmark_key,
+            },
+        )
+        assert isinstance(res, str)
+        log.debug(f"abort_benchmark received {res}")
+
+    def poll_benchmark(self, wait_for_the_results: bool = True) -> None:
         """Poll for the benchmark result.
+
+        Args:
+            wait_for_the_results (bool, optional): Whether to wait for the benchmark results.
+                If False, the polling will be finished as soon as the weights are uploaded. Defaults to True.
 
         Raises:
             ValueError: When unexpected signal is caught by SIGINT handler.
             RuntimeError: When error occurred during benchmarking process.
         """
-        require_weight_upload = self.plan.paid
 
         def sigint_handler(sig: signal.Signals, frame: Any) -> None:
             if sig != signal.SIGINT:
                 raise ValueError(f"Unexpected signals: {sig} (frame={frame})")
-            print("")
-            if require_weight_upload:
-                log.warning(
-                    "Escaping from the polling. The requested benchmark will fail as the weights are not uploaded"
-                )  # UX
+            print()
+            if benchmark_status == BenchmarkStatus.PRE_FETCHING:
+                self.abort_benchmark()
             else:
                 log.info("Escaping from the polling. The benchmark will still run in the background")  # UX
             sys.exit(sig)
 
-        if require_weight_upload:
-            log.info(
-                "Waiting for ONNX model weights to be uploaded. Please be patient. "
-                "Benchmarking will fail if the weights are not uploaded"
-            )  # UX
+        iteration_count = 0
+        error_log = ""
+        benchmark_status = BenchmarkStatus.IDLE
+        weight_file_uploaded = False
 
         original_sigint_handler = signal.signal(signal.SIGINT, sigint_handler)  # type: ignore
+        log.info(
+            "Waiting for benchmark results. Press Ctrl+C to escape from the polling. "
+            "If you escape before the engine is built, the requested benchmark will be aborted."
+        )  # UX
 
-        count = 0
-        error_log = ""
-        status = BenchmarkStatus.IDLE
-        informed = False
         while True:
-            if count % 5 == 0:
-                info = self.get_benchmark_queue()
-                status = BenchmarkStatus(info.get("status", -999))
+            if iteration_count % 5 == 0:
+                benchmark_info = self.get_benchmark_queue()
+                benchmark_status = BenchmarkStatus(benchmark_info.get("status", -999))
 
-            if not require_weight_upload and not informed:
+            if len(bin_url := benchmark_info.get("url", "")) and not weight_file_uploaded:
+                print()
+                self.upload_weight_file(bin_url)
+                weight_file_uploaded = True
+
+                if not wait_for_the_results:
+                    log.info(
+                        f"The benchmark is running on the device remotely. You can later find the results at {self.url}"
+                    )  # UX
+                    break
                 log.info(
                     "Polling for benchmark result. Press Ctrl+C to escape. "
                     f"You can later find the results at {self.url}"
                 )  # UX
-                count = 0  # reset the count to start the owl from the beginning
-                informed = True
 
-            match status:
-                case BenchmarkStatus.PRE_FETCHING | BenchmarkStatus.BENCHMARKING:
-                    if require_weight_upload and len(bin_url := info.get("url", "")):
-                        print()
-                        self.upload_weight_file(bin_url)
-                        require_weight_upload = False
+            match benchmark_status:
+                case BenchmarkStatus.PRE_FETCHING:
+                    queue_position = benchmark_info.get("pos", None)
+                    progress_dots = ". " * (iteration_count % 4)
+                    message = (
+                        f"\rYour position in the queue: {queue_position} {progress_dots}"
+                        if queue_position is not None
+                        else f"\rWaiting for the file fetch {progress_dots}"
+                    )
 
-                    message = "\r"
-                    job_position = info.get("pos", None)
-                    if job_position is not None:
-                        dots = ". " * (count % 4)
-                        spaces = "  " * (3 - (count % 4))
-                        message = f"\rYour position in the queue: {job_position} {dots}{spaces}"  # UX
-
-                    elif informed:
-                        dots_before = "." * count
-                        owl_emoji = "\U0001f989"
-                        dots_after = "." * (19 - count)
-                        message = f"\r[{dots_before}{owl_emoji}{dots_after}]"  # UX
-
-                    print(f"{message}", end="", flush=True)
+                case BenchmarkStatus.BENCHMARKING:
+                    dots_before = "." * iteration_count
+                    owl_emoji = "\U0001f989"
+                    dots_after = "." * (19 - iteration_count)
+                    message = f"\r[{dots_before}{owl_emoji}{dots_after}]"  # UX
 
                 case BenchmarkStatus.BENCHMARK_DONE:
                     print()
                     log.info("Benchmarking done")  # UX
                     break
 
-                case _ if status.failed:
-                    error_log = info.get("error_log", "")
+                case _ if benchmark_status.failed:
+                    error_log = benchmark_info.get("error_log", "")
                     break
 
-            count = (count + 1) % 20
+            print(f"{message:40}", end="", flush=True)
+            iteration_count = (iteration_count + 1) % 20
             time.sleep(2)
 
         signal.signal(signal.SIGINT, original_sigint_handler)
-        if status.failed:
+        if benchmark_status.failed:
             status_message_dict = {
                 BenchmarkStatus.FETCHING_ERR: "Benchmarking failed with pre-fetching.",
                 BenchmarkStatus.TIMEOUT_ERR: "Benchmarking failed with timeout.",
@@ -341,7 +372,7 @@ class Benchmarkable:
             sep = "\n\t\t" if error_log else ""
             error_message = (
                 f"{error_log}"
-                f"{sep}{status_message_dict[status]} "
+                f"{sep}{status_message_dict[benchmark_status]} "
                 f"{sep}Please try again, and if the problem persists, please report the issue at "
                 f"{OWLITE_REPORT_URL} for further assistance"
             )
