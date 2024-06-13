@@ -1,7 +1,12 @@
+# pylint: disable=unused-argument
+
 from collections.abc import Callable
 
 import torch
 from torch import Tensor
+from torch._C._onnx import TensorProtoDataType
+from torch.autograd import Function
+from torch.onnx._internal import jit_utils
 
 
 def fake_quantize(
@@ -76,14 +81,92 @@ def fake_quantize(
     )
 
 
+# pylint: disable-next=abstract-method
+class BaseFakeINTQuantizeFunction(Function):
+    """An autograd function for fake INT quantization.
+
+    Static Methods:
+        symbolic: Defines the symbolic computation graph for the function.
+    """
+
+    @staticmethod
+    @torch.onnx.symbolic_helper.parse_args("v", "v", "v", "none", "i", "i", "i")  # type: ignore
+    def symbolic(
+        g: jit_utils.GraphContext,
+        inputs: torch.Value,
+        step_size: torch.Value,
+        zero_point: torch.Value,
+        grad_scale: float,
+        quant_min: int,
+        quant_max: int,
+        axis: int | None,
+    ) -> torch.Value | tuple[torch.Value, ...]:
+        r"""Define the symbolic computation graph for the function.
+
+        Args:
+            g (`jit_utils.GraphContext`): The graph context.
+            inputs (`torch.Value`): A tensor to quantize.
+            step_size (`torch.Value`): The quantization scale, determining the magnitude of each quantization interval.
+            zero_point (`torch.Value`): The quantization zero\_point. It may be expressed as a float in the context of
+                asymmetric quantization, while for symmetric quantization, it is fixed at 0.
+            grad_scale (`float`): The gradient scale.
+            quant_min (`int`): The lower bound of the quantized domain, specified as an integer.
+            quant_max (`int`): The upper bound of the quantized domain in as an integer.
+            axis (`int`, optional): Channel axis. Only used when `per_channel` is `True`. Defaults to 0.
+
+        Returns:
+            The output value.
+        """
+        return int8_qdq_symbolic(g, inputs, step_size, zero_point, quant_min, quant_max, axis)
+
+
+def int8_qdq_symbolic(
+    g: jit_utils.GraphContext,
+    inputs: torch.Value,
+    step_size: torch.Value,
+    zero_point: torch.Value,
+    quant_min: int,
+    quant_max: int,
+    axis: int | None,
+) -> torch.Value | tuple[torch.Value, ...]:
+    """Define the symbolic computation graph for fake INT8 quantization.
+
+    Args:
+        g (`jit_utils.GraphContext`): The graph context.
+        inputs (`torch.Value`): A tensor to quantize.
+        step_size (`torch.Value`): The quantization scale, determining the magnitude of each quantization interval.
+        zero_point (`torch.Value`): The quantization zero_point. It may be expressed as a float in the context of
+            asymmetric quantization, while for symmetric quantization, it is fixed at 0.
+        quant_min (`int`): The lower bound of the quantized domain, specified as an integer.
+        quant_max (`int`): The upper bound of the quantized domain in as an integer.
+        axis (`int`, optional): Channel axis. Only used when `per_channel` is `True`. Defaults to 0.
+
+    Returns:
+        The output value.
+    """
+    if (quant_min, quant_max) not in [(0, 255), (-128, 127)]:
+        raise torch.onnx.errors.SymbolicValueError(
+            "For int quantizer's (quant_min, quant_max), ONNX allows only (0, 255) and (-128, 127). "
+            f"Got ({quant_min}, {quant_max})",
+            inputs,
+        )
+    if quant_min == 0:
+        zero_point = g.op("Cast", zero_point, to_i=TensorProtoDataType.UINT8)
+    else:
+        zero_point = g.op("Cast", zero_point, to_i=TensorProtoDataType.INT8)
+    quantized = g.op("QuantizeLinear", inputs, step_size, zero_point, axis_i=axis)
+    dequantized = g.op("DequantizeLinear", quantized, step_size, zero_point, axis_i=axis)
+    return dequantized
+
+
 FakeQuantizeSignature = Callable[
     [
         Tensor,  # inputs
         Tensor,  # step_size
         Tensor,  # zp
         float,  # grad_scale
-        int,  # quant_min
-        int,  # quant_max
+        int | float,  # quant_min
+        int | float,  # quant_max
         int | None,  # axis
     ],
     Tensor,

@@ -1,6 +1,14 @@
 import torch
 
-from .fake_quantizer import FakePerChannelQuantizer, FakePerTensorQuantizer, FakeQuantizer
+from .fake_quantizer import (
+    FakeFPQuantizer,
+    FakeINTQuantizer,
+    FakePerChannelFPQuantizer,
+    FakePerChannelINTQuantizer,
+    FakePerTensorFPQuantizer,
+    FakePerTensorINTQuantizer,
+    FakeQuantizer,
+)
 from .qconv import QConv1d, QConv2d, QConv3d
 from .qconvbn import QConvBn1d, QConvBn2d, QConvBn3d
 from .qlinear import QLinear

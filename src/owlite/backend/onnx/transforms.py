@@ -13,7 +13,7 @@ from ...owlite_core.logger import log
 from ..config import ONNX_TRANSFORM_MAXIMUM_ITERATION
 from ..utils import get_numpy_type, is_floating_point, nodestr
 from .export_with_external_data import export_with_external_data
-from .fold_constants import fold_constants  # type: ignore
+from .fold_constants import fold_constants
 from .onnx_op import ONNXOp
 
 OnnxTransform = Callable[[gs.Graph], gs.Graph]
@@ -285,17 +285,14 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
             if conv_bias is None:
                 return None
 
-        assert (
-            isinstance(conv_weight, gs.Constant)
-            and isinstance(conv_bias, gs.Constant | type(None))
-            and isinstance(quantizer_step_size, gs.Constant | type(None))
-        )
-
         return conv_weight, conv_bias, quantizer_step_size
 
-    def _is_narrow_range_quantization(conv_weight: gs.Constant, step_size: gs.Constant) -> bool:
-        assert conv_weight.values.ndim == 4
-        assert step_size.values.ndim in (0, 1)
+    def _is_narrow_range_integer_quantization(conv_weight: gs.Constant, step_size: gs.Constant) -> bool:
+        if not (
+            (zero_point := _get_constant_or_none(conv_weight.outputs[0].inputs[2]))
+            and np.issubdtype(zero_point.dtype, np.integer)
+        ):
+            return False
 
         step_size_value = np.atleast_1d(step_size.values)[:, np.newaxis, np.newaxis, np.newaxis]
 
@@ -350,11 +347,11 @@ def fold_nodes_after_conv(graph: gs.Graph) -> gs.Graph:
             return False
 
         if quantizer_step_size is not None:
-            # cannot fold negative values into quantized weight when -128 bin is not empty
+            # cannot fold negative values into integer quantized weight when -128 bin is not empty
             if (
                 (node_to_fold.op in ("Mul", "Div") and np.min(parameter_to_fold.values) < 0)
                 or (node_to_fold.op == "Sub" and node_to_fold.inputs[1] is conv_output_tensor)
-                and not _is_narrow_range_quantization(conv_weight, quantizer_step_size)
+                and not _is_narrow_range_integer_quantization(conv_weight, quantizer_step_size)
             ):
                 return False
 
@@ -688,3 +685,95 @@ def replace_all_uses(existing_tensor: gs.Constant | gs.Variable, new_tensor: gs.
     for node in existing_tensor.outputs:
         i = node.inputs.index(existing_tensor)
         node.inputs[i] = new_tensor
+
+
+def convert_fp8_to_int8(model_proto: ModelProto) -> tuple[ModelProto, list[str]]:
+    r"""Convert FLOAT8E4M3FN data types to INT8 in the given ONNX model.
+
+    Note that this function is intended to be used to avoid side effects of optimizer passes,
+    and may write a arbitrary raw_data (in this case b'\xc3') to the model.
+
+    Args:
+        model_proto (ModelProto): The ONNX model to convert.
+
+    Returns:
+        tuple[ModelProto, list[str]]: A tuple containing the converted model and a list of names of
+            the converted FLOAT8E4M3FN protos.
+
+    Notes:
+        This function only works for ONNX models with opset version 19 or higher.
+    """
+    if model_proto.opset_import[0].version < 19:
+        return model_proto, []
+    fp8_names = []
+    for tensor_proto in model_proto.graph.initializer:
+        if tensor_proto.data_type == TensorProto.FLOAT8E4M3FN:
+            fp8_names.append(tensor_proto.name)
+            tensor_proto.data_type = TensorProto.INT8
+            tensor_proto.raw_data = convert_prefix_byte(tensor_proto.raw_data, b"\xc3")
+            log.debug(f"fp8_to_int8: tensor proto[{tensor_proto.name}]")
+    for valueinfo_proto in model_proto.graph.value_info:
+        if valueinfo_proto.type.tensor_type.elem_type == TensorProto.FLOAT8E4M3FN:
+            fp8_names.append(valueinfo_proto.name)
+            valueinfo_proto.type.tensor_type.elem_type = TensorProto.INT8
+            log.debug(f"fp8_to_int8: valueinfo proto[{valueinfo_proto.name}]")
+    for node_proto in model_proto.graph.node:
+        if node_proto.op_type == "Constant" and node_proto.attribute[0].t.data_type == TensorProto.FLOAT8E4M3FN:
+            fp8_names.append(node_proto.name)
+            node_proto.attribute[0].t.data_type = TensorProto.INT8
+            node_proto.attribute[0].t.raw_data = convert_prefix_byte(node_proto.attribute[0].t.raw_data, b"\xc3")
+            log.debug(f"fp8_to_int8 : node proto[{node_proto.name}]")
+    log.debug(f"Found {len(fp8_names)} FP8 protos and replaced them with INT8: {fp8_names}")
+    return model_proto, fp8_names
+
+
+def convert_to_fp8(model_proto: ModelProto, fp8_names: list[str]) -> ModelProto:
+    """Convert to FLOAT8E4M3FN in names.
+
+    Note that this function rewrite the raw_data that would have been replaced by the `convert_fp8_to_int8` function
+    back to zero.
+
+    Args:
+        model_proto (ModelProto): The ONNX model to convert.
+        fp8_names (list[str]): A list of names of the protos to convert back to FLOAT8E4M3FN.
+
+    Returns:
+        ModelProto: The converted model.
+    """
+    if model_proto.opset_import[0].version < 19:
+        return model_proto
+    for tensor_proto in model_proto.graph.initializer:
+        if tensor_proto.name in fp8_names:
+            fp8_names.remove(tensor_proto.name)
+            tensor_proto.data_type = TensorProto.FLOAT8E4M3FN
+            tensor_proto.raw_data = convert_prefix_byte(tensor_proto.raw_data, b"\x00")
+            log.debug(f"convert_to_fp8: tensor proto[{tensor_proto.name}]")
+    for valueinfo_proto in model_proto.graph.value_info:
+        if valueinfo_proto.name in fp8_names:
+            fp8_names.remove(valueinfo_proto.name)
+            valueinfo_proto.type.tensor_type.elem_type = TensorProto.FLOAT8E4M3FN
+            log.debug(f"convert_to_fp8: valueinfo proto[{valueinfo_proto.name}]")
+    for node_proto in model_proto.graph.node:
+        if node_proto.op_type == "Constant" and node_proto.name in fp8_names:
+            fp8_names.remove(node_proto.name)
+            node_proto.attribute[0].t.data_type = TensorProto.FLOAT8E4M3FN
+            convert_prefix_byte(node_proto.attribute[0].t.raw_data, b"\x00")
+            log.debug(f"convert_to_fp8: node proto[{node_proto.name}]")
+    if len(fp8_names) > 0:
+        log.debug_warning(f"The corresponding {len(fp8_names)} FP8 names could not be found in onnx: {fp8_names}")
+    return model_proto
+
+
+def convert_prefix_byte(bytes_object: bytes, target_bytes: bytes) -> bytes:
+    """Replace the prefix of a bytes object with a target prefix.
+
+    Args:
+        bytes_object (`bytes`): The original bytes object.
+        target_bytes (`bytes`): The target prefix to replace the original prefix with.
+
+    Returns:
+        A new bytes object with the target prefix and the remaining bytes from the original object.
+    """
+    if len(bytes_object) < len(target_bytes):
+        return target_bytes[: len(bytes_object)]
+    return target_bytes + bytes_object[len(target_bytes) :]

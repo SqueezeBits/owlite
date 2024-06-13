@@ -143,10 +143,9 @@ def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphMo
             graph_captured_result,
             output,
         ]
-        if torch.__version__ >= (2, 2, 0):  # type: ignore[operator]
+        if torch.__version__ >= (2, 1, 3):  # type: ignore[operator]
             flat_args_dynamic_dims: list[dict[str, Any]] = [{} for _ in flat_args]
             rewrite_signature_args.append(flat_args_dynamic_dims)
-
         # pylint: disable-next=no-value-for-parameter
         graph_module = torch_dynamo.eval_frame.rewrite_signature(*rewrite_signature_args)
 

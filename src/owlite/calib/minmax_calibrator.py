@@ -22,6 +22,13 @@ class MinmaxCalibrator(Calibrator):
         \text{zero\_point} = - \frac{\min_{x \\in X}(x)}{\text{step\_size}} + \text{quant\_min}
     $$
 
+    For symmetric quantization:
+
+    $$
+        \text{step\_size}=\frac{\max_{x \\in X}(|x|)}{\text{quant\_max}-\text{quant\_min}}
+        \text{zero\_point} = 0
+    $$
+
     Attributes:
         max_value (`torch.Tensor`, `optional`): maximum value of data passing through the quantizer.
         min_value (`torch.Tensor`, `optional`): minimum value of data passing through the quantizer.
@@ -31,12 +38,6 @@ class MinmaxCalibrator(Calibrator):
         super().__init__(quantizer)
         self.max_value: torch.Tensor | None = None
         self.min_value: torch.Tensor | None = None
-
-    def check_calib_ready(self) -> bool:
-        if self.quantizer.symmetric:
-            log.error("MinMax Calibration only surpports aymmetric quantization")
-            return False
-        return super().check_calib_ready()
 
     def prepare(self) -> RemovableHandle:
         # define forward hook function
@@ -50,7 +51,6 @@ class MinmaxCalibrator(Calibrator):
                 raise ValueError(
                     "During calibration, calibration attributions should be initialized, but None was provided"
                 )
-            # pylint:disable=duplicate-code
             _input = inputs[0].clone()
             with torch.no_grad():
                 if module.channel is not None:
@@ -68,7 +68,6 @@ class MinmaxCalibrator(Calibrator):
                 calibrator.min_value.data = torch.minimum(
                     new_min.to(calibrator.min_value.device), calibrator.min_value
                 ).data
-            # pylint:enable=duplicate-code
             return output
 
         # ~define forward hook function
@@ -98,8 +97,10 @@ class MinmaxCalibrator(Calibrator):
             raise ValueError(
                 "During preparing calibration, calibration attributions should be initialized, but None was provided"
             )
-
-        self.update_fake_quantizer_param_with_max_min(self.max_value, self.min_value)
+        if self.quantizer.symmetric:
+            self.update_fake_quantizer_param_with_max_min(torch.max(self.max_value.abs(), self.min_value.abs()))
+        else:
+            self.update_fake_quantizer_param_with_max_min(self.max_value, self.min_value)
 
         # set "min_value" and "max_value" attritbutions to `None`
         self.max_value, self.min_value = None, None

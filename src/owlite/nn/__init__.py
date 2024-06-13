@@ -1,6 +1,10 @@
 from .modules import (
-    FakePerChannelQuantizer,
-    FakePerTensorQuantizer,
+    FakeFPQuantizer,
+    FakeINTQuantizer,
+    FakePerChannelFPQuantizer,
+    FakePerChannelINTQuantizer,
+    FakePerTensorFPQuantizer,
+    FakePerTensorINTQuantizer,
     FakeQuantizer,
     QConv1d,
     QConv2d,

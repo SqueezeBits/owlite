@@ -7,7 +7,7 @@ from torch.nn import Module
 from torch.nn.modules.batchnorm import _BatchNorm
 from torch.nn.modules.conv import _ConvNd
 
-from ...nn.modules.fake_quantizer import FakePerTensorQuantizer, FakeQuantizer
+from ...nn.modules.fake_quantizer import FakeQuantizer, PerTensorMixin
 from ...nn.modules.qconv import QConv1d, QConv2d, QConv3d
 from ...nn.modules.qlinear import QLinear
 from ...options import Channel
@@ -49,12 +49,12 @@ def rescale_step_size_with_batchnorm(
         return None
     scale = batchnorm.weight.data * torch.rsqrt(batchnorm.running_var.data + batchnorm.eps)
 
-    if isinstance(quantizer, FakePerTensorQuantizer):
+    if isinstance(quantizer, PerTensorMixin):
         log.warning(
             "Trying to BatchNorm Fuse a module that weight quantization is per-tensor. "
             "Automatically changed it to per-channel quantization"
         )
-        quantizer.as_per_channel(Channel(axis=0, size=batchnorm.num_features))
+        quantizer = quantizer.as_per_channel(Channel(axis=0, size=batchnorm.num_features))  # type: ignore[assignment]
     quantizer.step_size.data = quantizer.step_size.data * scale.abs()
     return quantizer
 
@@ -92,43 +92,50 @@ def _fuse_by_pattern(
     model.delete_submodule(node.target)
 
 
-def fuse_conv_bn_eval(conv: _ConvNd, bn: _BatchNorm | None) -> _ConvNd:
-    """Fuse convolution and batchnorm in eval mode.
+def fuse_conv_bn_eval(conv: _ConvNd, bn: _BatchNorm | None, rescale_step_size: bool = True) -> _ConvNd:
+    """Fuse a convolution module and a batch normalization module in evaluation mode.
 
-    If the covolution is a quantized convolution, the step size of the weight quantizer is rescaled to reflect.
+    If the convolution module is a quantized convolution and `rescale_step_size` is True,
+    the step size of the weight quantizer is rescaled to reflect the batch normalization.
 
     Args:
-        conv(torch.nn.module.conv._ConvNd, optional): The convolution module for fusing
-        bn(torch.nn._BatchNorm): The batchnorm module for fusing
+        conv (`torch.nn.module.conv._ConvNd`): The convolution module to fuse.
+        bn (`torch.nn._BatchNorm` | `None`): The batch normalization module to fuse.
+        rescale_step_size (`bool`, optional): Whether to rescale the step size of the weight quantizer.
+            Defaults to True.
 
     Returns:
-        Fused convolution module.
+        _ConvNd: The fused convolution module.
     """
     if bn is None:
         return conv
     fused_conv = torch.nn.utils.fusion.fuse_conv_bn_eval(conv, bn)
-    if isinstance(fused_conv, QConv1d | QConv2d | QConv3d) and fused_conv.weight_quantizer:
-        rescale_step_size_with_batchnorm(fused_conv.weight_quantizer, bn)
+    if rescale_step_size and isinstance(fused_conv, QConv1d | QConv2d | QConv3d) and fused_conv.weight_quantizer:
+        fused_conv.weight_quantizer = rescale_step_size_with_batchnorm(fused_conv.weight_quantizer, bn)
     return fused_conv
 
 
-def fuse_linear_bn_eval(linear: torch.nn.Linear, bn: _BatchNorm | None) -> torch.nn.Linear:
-    """Fuse linear and batchnorm in eval mode.
+def fuse_linear_bn_eval(
+    linear: torch.nn.Linear, bn: _BatchNorm | None, rescale_step_size: bool = True
+) -> torch.nn.Linear:
+    """Fuse a linear module and a batch normalization module in evaluation mode.
 
-    If the linear is a quantized convolution,
-    rescale the step size of the weight quantizer to reflect the batchnorm.
+    If the linear module is a quantized linear module and `rescale_step_size` is True,
+    rescale the step size of the weight quantizer to reflect the batch normalization.
 
     Args:
-        linear(torch.nn.Linear, optional): The convolution module for fusing
-        bn(torch.nn.BatchNorm1d): The batchnorm module for fusing
+        linear (`torch.nn.Linear`): The linear module to fuse.
+        bn (`torch.nn.BatchNorm1d` | `None`): The batch normalization module to fuse.
+        rescale_step_size (`bool`, optional): Whether to rescale the step size of the weight quantizer.
+            Defaults to True.
 
     Returns:
-        Fused convolution module.
+        torch.nn.Linear: The fused linear module.
     """
     if bn is None:
         return linear
-    fused_linear = torch.nn.utils.fusion.fuse_conv_bn_eval(linear, bn)
-    if isinstance(fused_linear, QLinear) and fused_linear.weight_quantizer:
+    fused_linear = torch.nn.utils.fusion.fuse_linear_bn_eval(linear, bn)
+    if rescale_step_size and isinstance(fused_linear, QLinear) and fused_linear.weight_quantizer:
         rescale_step_size_with_batchnorm(fused_linear.weight_quantizer, bn)
     return fused_linear
 

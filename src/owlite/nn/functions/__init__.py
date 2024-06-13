@@ -1,3 +1,4 @@
+# ruff: noqa: D205
 """Quantization Aware Training (QAT) is a technique that allows the model to learn the quantization error during the
 training process. QAT aims to minimize the loss of accuracy during the quantization process, thus making the model
 smaller and faster while maintaining as much of its accuracy as possible. OwLite makes QAT easier, requiring only
@@ -44,6 +45,9 @@ the training of the compressed model. In this way, the model learns more effecti
 * **Reduce Weight Decay**: Similarly, if the learning process is fluctuating, consider reducing the weight decay
 to stabilize the training of the compressed model. In this way, the model generalizes better for unseen data.
 """
+
 from .clq import clq_function
+from .fake_fp_quantize import fake_fp8_quantize
 from .fake_quantize import FakeQuantizeSignature, fake_quantize
 from .ste import fake_quantize_ste_function, scaled_round_ste
+from .ste_fp import fake_fp_quantize_ste_function

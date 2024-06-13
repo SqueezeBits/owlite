@@ -1,11 +1,12 @@
 # ruff: noqa: D205
 from collections.abc import Generator
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from packaging.version import Version
 from pydantic import Field
 from typing_extensions import Self
 
+from ..enums import PTQCalibrationType, TargetDType
 from ..owlite_core.constants import FX_CONFIGURATION_FORMAT_VERSION
 from ..owlite_core.logger import log
 from .channel import Channel
@@ -102,6 +103,40 @@ class CompressionOptions(OptionsMixin):
     __version__: ClassVar[Version] = FX_CONFIGURATION_FORMAT_VERSION
     node_compression_config: NodeCompressionConfig = Field(default_factory=NodeCompressionConfig)
     fake_quantizers: FakeQuantizerConfig = Field(default_factory=FakeQuantizerConfig)
+
+    def serialize_as_json(self, version: Version | None = None) -> dict[str, Any]:
+        d = super().serialize_as_json(version)
+
+        if version and version < Version("1.3"):
+            # fake quantizer option as changed since format version 1.3
+            self.downgrade_compression_options(d["fake_quantizers"])
+
+        return d
+
+    def downgrade_compression_options(self, dumped_options: dict) -> None:
+        """Downgrade `CompressionOptions` to previous versions for backwards compatibility.
+
+        Args:
+            dumped_options (dict): JSON dumped options.
+
+        Raises:
+            ValueError: When dumped option contains newly added fields that cannot be downgraded.
+        """
+        if "dtype" in dumped_options:
+            dtype: TargetDType = getattr(TargetDType, dumped_options.pop("dtype"))
+            if dtype == TargetDType.fp8_e4m3:
+                raise ValueError(f"{dtype} is not available in lower versions than 1.3")
+
+            dumped_options["precision"] = dtype.precision
+            dumped_options["unsigned"] = dtype.unsigned
+
+            ptq_calibration = getattr(PTQCalibrationType, dumped_options["ptq_calibration"])
+            if ptq_calibration == PTQCalibrationType.minmax and dumped_options.get("symmetric", False):
+                dumped_options["ptq_calibration"] = PTQCalibrationType.absmax.name
+
+        for _, v in dumped_options.items():
+            if isinstance(v, dict):
+                self.downgrade_compression_options(v)
 
 
 def fake_quantizer_id_to_name(fake_quantizer_id: str) -> str:

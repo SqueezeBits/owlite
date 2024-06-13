@@ -1,7 +1,13 @@
+from typing import TYPE_CHECKING
+
 import numpy as np
 import torch
 
+from ..enums import TargetDType
 from .histogram_calibrator import HistogramCalibrator
+
+if TYPE_CHECKING:
+    from ..nn import FakeQuantizer
 
 
 class MSECalibrator(HistogramCalibrator):
@@ -23,11 +29,15 @@ class MSECalibrator(HistogramCalibrator):
     searching_ratio = 0.5
     stride = 12
 
+    def __init__(self, quantizer: "FakeQuantizer"):
+        if quantizer.target_dtype == (TargetDType.fp8_e4m3):
+            raise NotImplementedError("MSECalibrator for fp8_e4m3 is not implemented")
+        super().__init__(quantizer)
+
     def update(self) -> None:
         """Update step_size using "`mse`"."""
         super().update()
-        max_values = torch.empty_like(self.quantizer.step_size)
-        min_values = torch.empty_like(self.quantizer.step_size)
+        max_values, min_values = torch.empty_like(self.quantizer.step_size), torch.empty_like(self.quantizer.step_size)
         for chn, _ in enumerate(self.histograms):
             bins = self.histograms[chn].detach().cpu().numpy().astype(np.int32)
             valid = bins != 0

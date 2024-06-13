@@ -3,14 +3,13 @@ from typing import Any
 
 import torch
 from torch import Tensor
-from torch.autograd import Function
 
-from .fake_quantize import fake_quantize
+from .fake_quantize import BaseFakeINTQuantizeFunction, fake_quantize
 
 
 # mypy: disable-error-code=override
 # pylint: disable-next=abstract-method
-class CLQFunction(Function):
+class CLQFunction(BaseFakeINTQuantizeFunction):
     r"""An implementation of QAT function using CLQ (Constrained Learned Quantization).
 
     In **CLQ(Constrained Learned Quantization)** method, instead of using a fixed set of quantization levels,

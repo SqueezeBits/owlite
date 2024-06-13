@@ -4,7 +4,7 @@ from itertools import product
 import torch
 from torch.fx.node import Node
 
-from ...nn import FakeQuantizer, QLinear
+from ...nn import FakeINTQuantizer, FakeQuantizer, QLinear
 from ...nn.modules import UnaryNeuralQModuleMixin, promote_to_qmodule
 from ...options.compression_option import NodeCompressionOptions
 from ...owlite_core.logger import log
@@ -155,7 +155,8 @@ class CallModuleConvNodeConfigurator(NodeConfigurator):
                 )
                 and isinstance(module, UnaryNeuralQModuleMixin)
             ):
-                weight_quantizer.narrow_range = True
+                if isinstance(weight_quantizer, FakeINTQuantizer):
+                    weight_quantizer.narrow_range = True
                 module.weight_quantizer = weight_quantizer
                 graph_module.add_submodule(self.node.target, module)
 

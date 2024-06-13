@@ -20,7 +20,7 @@ from onnxsim.onnxsim_cpp2py_export import simplify_path
 from torch.fx.graph_module import GraphModule
 
 from ...enums import ModelStatus
-from ...nn import FakeQuantizer
+from ...nn import FakeFPQuantizer, FakeQuantizer
 from ...nn.functions import clq_function
 from ...options import DynamicAxisOptions
 from ...owlite_core.constants import OWLITE_VERSION
@@ -36,7 +36,7 @@ from ..utils import (
 from .dynamize import dynamize
 from .export_with_external_data import export_with_external_data
 from .model_checking import compare
-from .transforms import apply_onnx_transforms
+from .transforms import apply_onnx_transforms, convert_fp8_to_int8, convert_to_fp8
 
 # Large models (e.g. SwinTransformer) requires
 # more than 50 (default) onnxsim iterations
@@ -269,7 +269,8 @@ def export(
                 "This module has not yet been calibrated. "
                 "The onnx that comes out of this module may have unexpected results in accuracy and latency."
             )
-
+        if opset_version < 19 and any(isinstance(submodule, FakeFPQuantizer) for submodule in module.modules()):
+            raise ValueError(f"FP quantizers are supported from opset 19. But got {opset_version}")
         clip_narrow_range_weights(module)
         # Batch Norm Fusing
         if not skip_fuse_bn:
@@ -437,6 +438,7 @@ def _optimize(
     modified_proto = onnx_proto
     try:
         if simplify:
+            modified_proto, name_list = convert_fp8_to_int8(modified_proto)
             log.debug("Running onnxsim.simplify")
             modified_proto, _ = onnxsim.simplify(
                 modified_proto,
@@ -444,8 +446,8 @@ def _optimize(
                 skip_fuse_bn=skip_fuse_bn,
                 skipped_optimizers=skipped_optimizers,
             )
-
             # onnxsim produces anonymous nodes problematic for creating ONNXToFXMap
+            modified_proto = convert_to_fp8(modified_proto, name_list)
             modified_proto = name_anonymous_nodes(modified_proto)
             if len([*modified_proto.graph.node]) == 0:
                 log.warning("All nodes are constant-folded by onnxsim.")
@@ -612,7 +614,7 @@ def check_fake_quantization_condition(model: GraphModule) -> bool:
                 )  # UX
                 raise ValueError("The step size contains negative numbers.")
             # check symmetry
-            if module.symmetric and module.zero_point.amax() > 0:
+            if module.symmetric and module.zero_point.abs().max() > 0:
                 raise ValueError(f"({name}) : The zero point of symmetric quantization is not 0.")
 
             if module.zero_point.min() < module.quant_min or module.zero_point.max() > module.quant_max:

@@ -3,15 +3,21 @@ from typing import Annotated, Any, Literal
 from pydantic import BeforeValidator, Field, PlainSerializer, model_validator
 from typing_extensions import Self
 
-from ..enums import PTQCalibrationType, QATBackwardType, get_before_validator, serialize_as_name
+from ..enums import PTQCalibrationType, QATBackwardType, TargetDType, get_before_validator, serialize_as_name
 from ..owlite_core.logger import log
 from .options_mixin import OptionsMixin
 
+Dtype = Annotated[
+    TargetDType,
+    Field(default=TargetDType.int8),
+    BeforeValidator(get_before_validator(TargetDType)),
+    PlainSerializer(serialize_as_name),
+]
 Percentile = Annotated[float, Field(gt=0, le=100)]
-Precision = Literal[4, 8, 16]
+Precision = Literal[8, 16]
 PTQCalibration = Annotated[
     PTQCalibrationType,
-    Field(default=PTQCalibrationType.absmax),
+    Field(default=PTQCalibrationType.minmax),
     BeforeValidator(get_before_validator(PTQCalibrationType)),
     PlainSerializer(serialize_as_name),
 ]
@@ -23,17 +29,33 @@ QATBackward = Annotated[
 ]
 
 
+def map_precision_and_unsigned_to_dtype(precision: Precision, unsigned: bool) -> Dtype:
+    """Map the combination of precision and unsigned flag to dtype.
+
+    Args:
+        precision (Precision): The precision.
+        unsigned (bool): The unsigned flag.
+
+    Returns:
+        Dtype: The mapped data type.
+    """
+    if precision == 8 and unsigned:
+        return TargetDType.uint8
+    if precision == 8 and not unsigned:
+        return TargetDType.int8
+    return TargetDType.fp16
+
+
 # pylint: disable=too-many-instance-attributes
 class FakeQuantizerOptions(OptionsMixin):
     """Options required for setting up a quantizer."""
 
+    dtype: Dtype
     qat_backward: QATBackward
     ptq_calibration: PTQCalibration
-    precision: Precision = Field(default=8)
     per_channel: bool = Field(default=False)
     symmetric: bool = Field(default=True)
     learn_zero_point: bool = Field(default=False)
-    unsigned: bool = Field(default=False)
     grad_scale: float = Field(default=1.000, ge=0, le=1)
     percentile: Percentile | None = Field(default=None)
 
@@ -57,8 +79,40 @@ class FakeQuantizerOptions(OptionsMixin):
         """Create per-tensor options with "clq" backward."""
         return cls(qat_backward=QATBackwardType.clq, per_channel=False, **kwargs)
 
+    @model_validator(mode="before")
+    @classmethod
+    def handle_deprecated_fields(cls, data: Any) -> Any:
+        """Handle deprecated fields.
+
+        deprecated fields since version 1.2.0
+        * precision: Precision = Field(default=8)
+        * unsigned: bool = Field(default=False)
+        """
+        if not isinstance(data, dict):
+            raise ValueError(f"Expected a dictionary data but got {data}")
+        if ("precision" in data) ^ ("unsigned" in data):
+            raise ValueError("'unsigned' and 'precision' field should always be used together")
+        if "dtype" in data and ("precision" in data or "unsigned" in data):
+            raise ValueError("'dtype' field cannot be used together with 'precision' or 'unsigned' field")
+        if not ("precision" in data and "unsigned" in data):
+            return data
+        if not (
+            (precision := data.pop("precision", None)) in Precision.__args__  # type: ignore[attr-defined]
+            and isinstance((unsigned := data.pop("unsigned", None)), bool)
+        ):
+            raise ValueError(
+                f"Invalid values found in 'precision' and/or 'unsigned' field: precision={precision}, "
+                f"unsigned={unsigned}"
+            )
+        data["dtype"] = map_precision_and_unsigned_to_dtype(precision, unsigned)
+        log.debug_warning(
+            f"An older version of config was detected: "
+            f"precision({precision}), unsigned({unsigned}) -> {data['dtype'].name}"
+        )
+        return data
+
     @model_validator(mode="after")
-    def validate_attribute_dependencies(self) -> "FakeQuantizerOptions":
+    def validate_attribute_dependencies(self) -> Self:
         """Validate the dependencies between the attributes."""
         # symmetric sits on the highest priority
         if self.symmetric:
@@ -69,12 +123,6 @@ class FakeQuantizerOptions(OptionsMixin):
                 )
                 self.learn_zero_point = False
         else:
-            if self.ptq_calibration == PTQCalibrationType.absmax:
-                log.warning(
-                    "ptq_calibration will be automatically set to minmax as symmetric is False. "
-                    'If you want to set ptq_calibration to "absmax", then set symmetric to True in advance'
-                )
-                self.ptq_calibration = PTQCalibrationType.minmax
             if self.per_channel:
                 log.warning(
                     "per_channel will be automatically set to False as symmetric is False. "

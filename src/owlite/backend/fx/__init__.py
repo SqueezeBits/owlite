@@ -3,6 +3,6 @@ from .trace import symbolic_trace
 from .transforms import (
     clip_narrow_range_weights,
     fuse_bn,
-    fuse_linear_bn_with_quantized_bias,
-    qconv_bn_to_qconvbn,
+    fuse_bn_into_qlinear_with_quantized_bias,
+    qconv_bn_to_qconvbn_with_int32bias,
 )

@@ -16,6 +16,7 @@ from ...nn.modules import (
     QLinear,
     UnaryNeuralQModuleMixin,
 )
+from ...nn.modules.granularity_mixin import PerTensorMixin
 from ...owlite_core.logger import log
 from ..utils import get_most_common_device
 from .batchnorm_fusion_helper import (
@@ -145,7 +146,7 @@ def canonicalize_hstack(graph_module: GraphModule) -> GraphModule:
     return graph_module
 
 
-def fuse_linear_bn_with_quantized_bias(model: GraphModule) -> None:
+def fuse_bn_into_qlinear_with_quantized_bias(model: GraphModule) -> None:
     """Perform batchnorm fusing of `owlite.nn.QLinear` to quantize bias or hidden inputs.
 
     If a QLinear in the [owlite.nn.QLinear, torch.nn.BatchNorm1d] pattern quantizes a bias or hidden input,
@@ -191,6 +192,46 @@ def fuse_linear_bn_with_quantized_bias(model: GraphModule) -> None:
             "Automatically fusing the Linear-BatchNorm patterns"
         )
         log.warning(f"Fused node : {fused_list}")
+
+
+def fuse_bn_into_qmodule_with_per_tensor_quantizer(model: GraphModule) -> None:
+    """Fuse a quantized module and a batch normalization module when the module uses per-tensor quantization.
+
+    Args:
+        model (GraphModule): a graph module.
+    """
+    qmodule_bn_patterns: list[tuple[type[Module], type[Module]]] = [
+        (QConv1d, torch.nn.BatchNorm1d),
+        (QConv2d, torch.nn.BatchNorm2d),
+        (QConv3d, torch.nn.BatchNorm3d),
+        (QLinear, torch.nn.BatchNorm1d),
+    ]
+
+    def _fuse_bn_into_qmodule_with_per_tensor_quantizer(
+        module: UnaryNeuralQModuleMixin, bn: _BatchNorm | None
+    ) -> Module | None:
+        """Fuse a module and a batch normalization when the module uses per-tensor quantization in model.
+
+        Args:
+            module (`UnaryNeuralQModuleMixin`): The module to fuse.
+            bn (`torch.nn.BatchNorm` | None): The batch normalization module to fuse.
+
+        Returns:
+            torch.nn.Module | None: The fused module or None if the module does not use per-tensor quantization.
+        """
+        if (weight_quantizer := module.weight_quantizer) is not None and isinstance(weight_quantizer, PerTensorMixin):
+            if isinstance(module, QConv1d | QConv2d | QConv3d):
+                log.debug(f"Fuse {module} and `BatchNormNd` with per-tensor weight quantizer({weight_quantizer.id})")
+                return fuse_conv_bn_eval(module, bn, rescale_step_size=False)
+            if isinstance(module, QLinear):
+                log.debug(f"Fuse {module} and `BatchNorm1d` with per-tensor weight quantizer({weight_quantizer.id})")
+                return fuse_linear_bn_eval(module, bn, rescale_step_size=False)
+        return None
+
+    training_status = model.training
+    model.eval()
+    fuse_by_patterns(model, qmodule_bn_patterns, _fuse_bn_into_qmodule_with_per_tensor_quantizer)
+    model.train(training_status)
 
 
 def fuse_bn(model: GraphModule) -> None:
@@ -240,7 +281,7 @@ def clip_narrow_range_weights(graph_module: GraphModule) -> None:
             module.clip_weight()
 
 
-def qconv_bn_to_qconvbn(model: GraphModule) -> None:
+def qconv_bn_to_qconvbn_with_int32bias(model: GraphModule) -> None:
     """Convert the QConvNd and BatchNormNd patterns in the model to QConvBnNd.
 
     Args:

@@ -7,11 +7,11 @@ name="owlite"
 dynamic = ["version"]
 description = "OwLite - No-Code AI compression Toolkit"
 dependencies = [
-  "onnx==1.15.*",
+  "onnx_graphsurgeon==0.5.2",
+  "onnx>=1.15, <=1.16",
   "torch>=2.1.2,<2.3",
-  "onnxruntime",
+  "onnxruntime>=1.17, <=1.18",
   "onnxsim",
-  "onnx_graphsurgeon@https://developer.download.nvidia.com/compute/redist/onnx-graphsurgeon/onnx_graphsurgeon-0.3.27-py2.py3-none-any.whl",
   "colored",
   "yacs",
   "tabulate",

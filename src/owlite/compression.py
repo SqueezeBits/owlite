@@ -17,12 +17,17 @@ Understanding how the data is spread across different values within each layer.
 are determined using one of several optimization objectives.
 The goal is to find the best balance between minimizing quantization error and preserving model accuracy.
 """
+
 from torch.fx.graph_module import GraphModule
 from torch.fx.node import Node
 
 from .backend.fx.node import find_constant_nodes
 from .backend.fx.node_configurator import NodeConfigurator
-from .backend.fx.transforms import fuse_linear_bn_with_quantized_bias, qconv_bn_to_qconvbn
+from .backend.fx.transforms import (
+    fuse_bn_into_qlinear_with_quantized_bias,
+    fuse_bn_into_qmodule_with_per_tensor_quantizer,
+    qconv_bn_to_qconvbn_with_int32bias,
+)
 from .enums import ModelStatus
 from .nn import FakeQuantizer, enable_quantizers
 from .options.compression_option import CompressionOptions, FakeQuantizerConfig
@@ -51,8 +56,9 @@ def compress(model: GraphModule, option: CompressionOptions) -> GraphModule:
     if not isinstance(model, GraphModule):
         raise TypeError("Only GraphModule instance can be quantized with `owlite.quantize`")
     configure(model, option)
-    fuse_linear_bn_with_quantized_bias(model)
-    qconv_bn_to_qconvbn(model)
+    fuse_bn_into_qmodule_with_per_tensor_quantizer(model)
+    fuse_bn_into_qlinear_with_quantized_bias(model)
+    qconv_bn_to_qconvbn_with_int32bias(model)
     enable_quantizers(model)
     return model
 

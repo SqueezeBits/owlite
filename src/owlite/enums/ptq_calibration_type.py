@@ -1,6 +1,8 @@
 from enum import IntEnum
 from typing import TYPE_CHECKING
 
+from ..owlite_core.logger import log
+
 if TYPE_CHECKING:
     from ..calib.calibrator import Calibrator
 
@@ -20,7 +22,6 @@ class PTQCalibrationType(IntEnum):
         """The Calibrator class corresponding to this enum value."""
         # pylint: disable-next=import-outside-toplevel
         from ..calib import (
-            AbsmaxCalibrator,
             EntropyCalibrator,
             MinmaxCalibrator,
             MSECalibrator,
@@ -28,10 +29,12 @@ class PTQCalibrationType(IntEnum):
         )
 
         predefined_classes: dict[str, type[Calibrator]] = {
-            "absmax": AbsmaxCalibrator,
+            "absmax": MinmaxCalibrator,
             "percentile": PercentileCalibrator,
             "mse": MSECalibrator,
             "minmax": MinmaxCalibrator,
             "entropy": EntropyCalibrator,
         }
+        if self.name == "absmax":
+            log.warning("`absmax` is deprecated and will be removed in the future release. Use `minmax` instead.")  # UX
         return predefined_classes[self.name]

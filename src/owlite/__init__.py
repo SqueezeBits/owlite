@@ -21,8 +21,11 @@ _import_structure = {
         "Runtime",
     ],
     "nn": [
-        "FakePerChannelQuantizer",
-        "FakePerTensorQuantizer",
+        "FakePerChannelINTQuantizer",
+        "FakePerTensorINTQuantizer",
+        "FakePerChannelFPQuantizer",
+        "FakePerTensorFPQuantizer",
+        "FakeINTQuantizer",
         "FakeQuantizer",
         "QConv1d",
         "QConv2d",
@@ -54,8 +57,10 @@ if TYPE_CHECKING:
     from .compression import compress
     from .enums import PTQCalibrationType, QATBackwardType, Runtime
     from .nn import (
-        FakePerChannelQuantizer,
-        FakePerTensorQuantizer,
+        FakePerChannelFPQuantizer,
+        FakePerChannelINTQuantizer,
+        FakePerTensorFPQuantizer,
+        FakePerTensorINTQuantizer,
         FakeQuantizer,
         QConv1d,
         QConv2d,

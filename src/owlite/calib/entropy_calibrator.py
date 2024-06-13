@@ -1,10 +1,15 @@
 from collections import Counter
 from math import ceil
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 
+from ..enums import TargetDType
 from .histogram_calibrator import HistogramCalibrator
+
+if TYPE_CHECKING:
+    from ..nn import FakeINTQuantizer
 
 
 # pylint: disable=too-many-locals
@@ -27,12 +32,16 @@ class EntropyCalibrator(HistogramCalibrator):
     searching_ratio = 0.75
     stride = 24
 
+    def __init__(self, quantizer: "FakeINTQuantizer"):
+        if quantizer.target_dtype == (TargetDType.fp8_e4m3):
+            raise NotImplementedError("EntropyCalibrator for fp8_e4m3 is not implemented")
+        super().__init__(quantizer)
+
     def update(self) -> None:
         """Update step_size using "`entropy`"."""
         super().update()
 
-        max_values = torch.empty_like(self.quantizer.step_size)
-        min_values = torch.empty_like(self.quantizer.step_size)
+        max_values, min_values = torch.empty_like(self.quantizer.step_size), torch.empty_like(self.quantizer.step_size)
         for chn, (histogram, bin_edge) in enumerate(zip(self.histograms, self.bin_edges)):
             bins = histogram.detach().cpu().numpy().astype(np.int32)
             valid = bins != 0
@@ -73,7 +82,7 @@ class EntropyCalibrator(HistogramCalibrator):
         self.clear()
 
     def _symmetric_quantization_divergence(self, bins: np.ndarray, valid: np.ndarray, max_idx: int) -> float:
-        nbins = self.quantizer.maxabs_bound + 1
+        nbins = int(self.quantizer.maxabs_bound + 1)
         valid_bins = bins[:max_idx][valid[:max_idx]]
         valid_digitized_space = (np.digitize(range(max_idx), np.linspace(0, max_idx, num=nbins + 1)) - 1)[
             valid[:max_idx]
@@ -99,7 +108,7 @@ class EntropyCalibrator(HistogramCalibrator):
     def _asymmetric_quantization_divergence(
         self, distribution: np.ndarray, histogram: np.ndarray, max_value: float, min_value: float
     ) -> float:
-        nbins = self.quantizer.quant_max - self.quantizer.quant_min + 1
+        nbins = int(self.quantizer.quant_max - self.quantizer.quant_min + 1)
         scale = np.float32(max_value - min_value) / (self.quantizer.quant_max - self.quantizer.quant_min)
         zero_point = -(min_value / scale).round() + self.quantizer.quant_min
         if zero_point < self.quantizer.quant_min or zero_point > self.quantizer.quant_max:

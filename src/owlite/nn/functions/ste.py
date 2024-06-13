@@ -5,7 +5,7 @@ import torch
 from torch import Tensor
 from torch.autograd import Function
 
-from .fake_quantize import fake_quantize
+from .fake_quantize import BaseFakeINTQuantizeFunction, fake_quantize
 
 
 # mypy: disable-error-code=override
@@ -35,7 +35,7 @@ class ScaledRoundSTE(Function):
 
 
 # pylint: disable-next=abstract-method
-class FakeQuantizeSTEFunction(Function):
+class FakeQuantizeSTEFunction(BaseFakeINTQuantizeFunction):
     r"""Fake quantizing function for QAT using STE (Straight-Through Estimator).
 
     For $$ quant\_min $$ <= `input` <= $$ quant\_max $$ the gradient passes straight through,
