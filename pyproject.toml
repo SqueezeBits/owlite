@@ -8,9 +8,9 @@ dynamic = ["version"]
 description = "OwLite - No-Code AI compression Toolkit"
 dependencies = [
   "onnx_graphsurgeon==0.5.2",
-  "onnx>=1.15, <=1.16",
+  "onnx>=1.15,<=1.16",
   "torch>=2.1.2,<2.3",
-  "onnxruntime>=1.17, <=1.18",
+  "onnxruntime>=1.17,<=1.18",
   "onnxsim",
   "colored",
   "yacs",
@@ -19,6 +19,7 @@ dependencies = [
   "tqdm",
   "pydantic",
   "lazy_imports",
+  "numpy<2.0.0",
 ]
 authors = [
   {name = "SqueezeBits.inc", email = "owlite@squeezebits.com"}
