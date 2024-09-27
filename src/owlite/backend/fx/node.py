@@ -4,7 +4,7 @@ import torch
 from torch.fx.graph import Graph, Node
 
 from ..utils import log
-from .target import CONSTANT_TARGETS
+from .target import CONSTANT_TARGETS, NONDETERMINISTIC_TARGETS
 from .types import TorchTarget
 
 
@@ -69,6 +69,10 @@ def find_constant_nodes(graph: Graph) -> list[Node]:
             return False
 
         if node.op == "placeholder":
+            non_constant_nodes.append(node)
+            return False
+
+        if node.target in NONDETERMINISTIC_TARGETS:
             non_constant_nodes.append(node)
             return False
 

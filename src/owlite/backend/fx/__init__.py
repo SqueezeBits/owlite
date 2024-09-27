@@ -1,3 +1,8 @@
+from .graph_checker import (
+    UnsupportedAutogradFunctionCallError,
+    UnsupportedFunctionCallError,
+    UnsupportedModuleCallError,
+)
 from .serialize import serialize
 from .trace import symbolic_trace
 from .transforms import (

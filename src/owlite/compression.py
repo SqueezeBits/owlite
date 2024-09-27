@@ -28,10 +28,10 @@ from .backend.fx.transforms import (
     fuse_bn_into_qmodule_with_per_tensor_quantizer,
     qconv_bn_to_qconvbn_with_int32bias,
 )
+from .core.logger import log
 from .enums import ModelStatus
 from .nn import FakeQuantizer, enable_quantizers
 from .options.compression_option import CompressionOptions, FakeQuantizerConfig
-from .owlite_core.logger import log
 
 
 def compress(model: GraphModule, option: CompressionOptions) -> GraphModule:

@@ -14,8 +14,8 @@
   <a href="https://github.com/SqueezeBits/owlite-examples" ><img src="https://img.shields.io/badge/Examples-4BCB7A" /></a>
   <a href="https://squeezebits.gitbook.io/owlite/quick/readme"><img src="https://img.shields.io/badge/Documentation-FFA32C" /></a>
 
-  <a href="https://github.com/SqueezeBits/owlite#installation"><img src="https://img.shields.io/badge/python-~=3.10-blue" /></a>
-  <a><img src="https://img.shields.io/badge/pytorch-2.0%20%7C%202.1%20%7C%202.2-blue" /></a>
+  <a href="https://github.com/SqueezeBits/owlite#installation"><img src="https://img.shields.io/badge/python->=3.10, <3.13-blue" /></a>
+  <a><img src="https://img.shields.io/badge/pytorch->=2.1.2<2.5-blue" /></a>
   <a href="https://github.com/SqueezeBits/owlite/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-APGL--3.0-lightgray" /></a>
 </p>    
 </div>
@@ -51,18 +51,9 @@
 
 ## **Installation**
 
-To install this package, please use Python 3.10.
-
 Using pip (Recommended)
 ```bash
 pip install owlite --extra-index-url https://pypi.squeezebits.com/
-```
-
-From source
-```bash
-git clone https://github.com/SqueezeBits/owlite.git
-cd owlite
-pip install .
 ```
 
 ## Getting Started

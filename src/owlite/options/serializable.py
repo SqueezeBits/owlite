@@ -8,7 +8,7 @@ from packaging.version import Version
 from typing_extensions import Self
 from yacs.config import CfgNode
 
-from ..owlite_core.logger import log
+from ..core.logger import log
 
 
 class Serializable(ABC):

@@ -3,8 +3,8 @@ from typing import Annotated, Any, Literal
 from pydantic import BeforeValidator, Field, PlainSerializer, model_validator
 from typing_extensions import Self
 
+from ..core.logger import log
 from ..enums import PTQCalibrationType, QATBackwardType, TargetDType, get_before_validator, serialize_as_name
-from ..owlite_core.logger import log
 from .options_mixin import OptionsMixin
 
 Dtype = Annotated[

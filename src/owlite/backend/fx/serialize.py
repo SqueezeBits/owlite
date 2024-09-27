@@ -3,16 +3,16 @@ import logging
 from tabulate import tabulate
 from torch.fx.graph_module import GraphModule
 
-from ...owlite_core.logger import log
+from ...core.logger import log
 from ..utils import targetstr
 from .node import get_target_module
 
 
 def serialize(graph_module: GraphModule) -> str:
-    """Serializes model into textual form.
+    """Serialize model into textual form.
 
     Args:
-        model (GraphModule): the model to be serialized
+        graph_module (GraphModule): the model to be serialized
 
     Returns:
         serialized (str): serialized fx graph

@@ -7,11 +7,11 @@ from torch.nn import Module
 from torch.nn.modules.batchnorm import _BatchNorm
 from torch.nn.modules.conv import _ConvNd
 
+from ...core.logger import log
 from ...nn.modules.fake_quantizer import FakeQuantizer, PerTensorMixin
 from ...nn.modules.qconv import QConv1d, QConv2d, QConv3d
 from ...nn.modules.qlinear import QLinear
 from ...options import Channel
-from ...owlite_core.logger import log
 from .node import get_target_module
 
 BNFusionFunction = Callable[[_ConvNd, _BatchNorm], _ConvNd] | Callable[[torch.nn.Linear, _BatchNorm], torch.nn.Linear]

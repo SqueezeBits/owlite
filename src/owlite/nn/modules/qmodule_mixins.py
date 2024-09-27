@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 import torch
 
-from ...owlite_core.logger import log
+from ...core.logger import log
 from .fake_quantizer import FakeQuantizer
 
 

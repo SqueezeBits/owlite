@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING, Optional
 from requests.exceptions import HTTPError
 from typing_extensions import Self
 
-from ..owlite_core.api_base import MAIN_API_BASE
-from ..owlite_core.constants import OWLITE_FRONT_BASE_URL, OWLITE_HOME_PATH
-from ..owlite_core.logger import log
+from ..core.api_base import MAIN_API_BASE
+from ..core.constants import OWLITE_FRONT_BASE_URL, OWLITE_HOME_PATH
+from ..core.logger import log
 
 if TYPE_CHECKING:
     from .baseline import Baseline

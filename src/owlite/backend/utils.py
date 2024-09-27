@@ -3,44 +3,84 @@ import json
 from collections import Counter, OrderedDict
 from collections.abc import Iterable
 from numbers import Number
-from typing import Any, Union
+from typing import Any
 
 import numpy as np
-import onnx_graphsurgeon as gs
+import onnx
 import torch
-from onnx import ModelProto, TensorProto
 from onnx import NodeProto as ONNXNode
-
-try:
-    from onnx_graphsurgeon.importers.onnx_importer import get_numpy_type
-except ImportError:
-    import onnx.mapping
-
-    # pylint: disable-next=missing-function-docstring
-    def get_numpy_type(onnx_type: Union[int, "TensorProto.DataType", np.dtype]) -> np.dtype | None:
-        if not isinstance(onnx_type, int):
-            # Already a NumPy type
-            return onnx_type
-
-        # For some reason, TENSOR_TYPE_TO_NP_TYPE maps `bfloat16` to `float32`.
-        # This obviously breaks things, so we need to treat this as a special case.
-        if onnx_type != onnx.TensorProto.BFLOAT16 and onnx_type in onnx.mapping.TENSOR_TYPE_TO_NP_TYPE:
-            return onnx.mapping.TENSOR_TYPE_TO_NP_TYPE[onnx_type]
-        return None
-
-
+from onnx.helper import tensor_dtype_to_np_dtype, tensor_dtype_to_string
 from torch.fx.graph_module import GraphModule
 from torch.fx.node import Node as FXNode
 from torch.fx.node import Target as FXTarget
 
-from ..owlite_core.logger import log
+from ..core.logger import log
 
-AnyNode = FXNode | ONNXNode | gs.Node
+try:
+    import onnx_graphsurgeon as gs
+
+    AnyNode = FXNode | gs.Node | ONNXNode
+except ImportError:
+    gs = None
+    AnyNode = FXNode | ONNXNode
 
 RTOL_FP16 = np.finfo(np.float16).smallest_normal.item()
 RTOL_FP32 = 1.0e-5
 ATOL_FP16 = np.finfo(np.float16).eps.item()
 ATOL_FP32 = 1.0e-8
+
+
+# pylint: disable-next=missing-function-docstring
+def get_numpy_type(onnx_type: np.dtype | int | None) -> np.dtype | None:
+    if onnx_type is None:
+        return None
+
+    if isinstance(onnx_type, np.dtype):
+        # Already a NumPy type
+        return onnx_type
+
+    # For some reason, TENSOR_TYPE_TO_NP_TYPE maps `bfloat16` to `float32`.
+    # This obviously breaks things, so we need to treat this as a special case.
+    if onnx_type == onnx.TensorProto.BFLOAT16:
+        return None
+    return tensor_dtype_to_np_dtype(onnx_type)
+
+
+# pylint: disable-next=missing-function-docstring
+def get_onnx_tensor_shape(onnx_tensor: onnx.ValueInfoProto | onnx.TensorProto) -> tuple[int | str, ...] | None:
+    if isinstance(onnx_tensor, onnx.TensorProto):
+        return tuple(onnx_tensor.dims)
+    if not onnx_tensor.type.tensor_type.HasField("shape"):
+        return None
+    shape = []
+    for dim in onnx_tensor.type.tensor_type.shape.dim:
+        if dim.HasField("dim_param"):
+            shape.append(dim.dim_param)
+        elif dim.HasField("dim_value"):
+            shape.append(dim.dim_value)
+        else:
+            shape.append(None)
+    return tuple(shape)
+
+
+# pylint: disable-next=missing-function-docstring
+def get_onnx_tensor_dtype(
+    onnx_tensor: onnx.ValueInfoProto | onnx.TensorProto,
+) -> np.dtype | int:
+    if isinstance(onnx_tensor, onnx.TensorProto):
+        onnx_type = onnx_tensor.data_type
+    else:
+        onnx_type = onnx_tensor.type.tensor_type.elem_type
+
+    dtype = get_numpy_type(onnx_type)
+    if dtype is not None:
+        return dtype
+
+    log.warning(
+        f"Could not convert: {tensor_dtype_to_string(onnx_type)} to a corresponding NumPy type. "
+        f"The original ONNX type will be preserved. ",
+    )
+    return onnx_type
 
 
 # pylint:disable = invalid-name
@@ -49,8 +89,8 @@ def nodestr(node: AnyNode | None, show_activations: bool = False) -> str:  # typ
 
     Args:
         node (AnyNode | None): a node. Must be an instance of one of the types:
-            torch.fx.Node, onnx.NodeProto or gs.Node
-        show_activations (bool, optional): Only available if node is either onnx.NodeProto or gs.Node instance. If True,
+            torch.fx.Node or onnx.NodeProto
+        show_activations (bool, optional): Only available if node is onnx.NodeProto instance. If True,
             the string representation contains the information about the node's input and output activations.
             Defaults to False.
 
@@ -92,7 +132,7 @@ def nodestr(node: AnyNode | None, show_activations: bool = False) -> str:  # typ
             )
             s = f"{s}: {a}"
         return s
-    if isinstance(node, gs.Node):
+    if gs is not None and isinstance(node, gs.Node):
         s = f"{node.name} ({node.op})"
         if show_activations:
             a = json.dumps(
@@ -279,28 +319,28 @@ def compare_nested_outputs(
         return f"[{key}]"
 
     def _compare_key_value(l: tuple, r: tuple, path: str) -> bool:
-        return (l[0] == r[0]) and _compare(l[1], r[1], path=path + _as_path(l[0]))
+        if l[0] != r[0]:
+            log.warning(f"An output name has been changed: {r[0]} -> {l[0]}")
+            return False
+        return _compare(l[1], r[1], path=path + _as_path(l[0]))
 
     def _compare(lhs: Any, rhs: Any, path: str = "") -> bool:
+        if lhs is None and rhs is None:
+            return True
+
         if not (lhs.__class__ is rhs.__class__ or isinstance(lhs, rhs.__class__)):
             log.warning(f"Output{path} have different types: {lhs.__class__.__name__}  != {rhs.__class__.__name__}")
             return False
 
         if isinstance(lhs, tuple | list | dict | OrderedDict):
             if len(lhs) != len(rhs):
-                log.warning(f"Output{path} have different length: {len(lhs)}  != {len(rhs)}")
+                log.warning(f"The length of output{path} has been changed: {len(rhs)} -> {len(lhs)}")
                 return False
-            return all(
-                map(
-                    lambda l, r: _compare_key_value(l, r, path),
-                    _as_key_value(lhs),
-                    _as_key_value(rhs),
-                )
-            )
+            return all(_compare_key_value(l, r, path) for l, r in zip(_as_key_value(lhs), _as_key_value(rhs)))
 
         if not isinstance(lhs, torch.Tensor | np.ndarray | Number):
             log.warning(
-                "Expected nested list/tuple/dict/OrderedDict of torch.Tensor/np.ndarray/Number objects, "
+                "Expected nested list/tuple/dict/OrderedDict of torch.Tensor/np.ndarray/Number/None objects, "
                 f"but found unsupported type {type(lhs)} while parsing nested structure."
             )
             return False
@@ -387,7 +427,7 @@ def convert_to_fp_ndarray(x: Number | np.ndarray | torch.Tensor) -> np.ndarray:
         np.ndarray: the value converted into numpy array
     """
     if isinstance(x, torch.Tensor):
-        x = x.cpu().detach().resolve_neg().resolve_conj().numpy()
+        x = x.numpy(force=True)
     elif isinstance(x, Number):
         x = np.array(x)
 
@@ -395,32 +435,3 @@ def convert_to_fp_ndarray(x: Number | np.ndarray | torch.Tensor) -> np.ndarray:
         x = x.astype(np.float32)  # type: ignore
 
     return x  # type: ignore
-
-
-def is_onnx_proto_data_external(onnx_proto: ModelProto) -> bool:
-    """Check if given onnx proto does not contain parameters.
-
-    Args:
-        onnx_proto (ModelProto): onnx proto to check
-
-    Returns:
-        bool: True if data are stored in external file False elsewise
-    """
-    external_count = [i.data_location for i in onnx_proto.graph.initializer].count(TensorProto.EXTERNAL)
-    return 2 * external_count >= len(onnx_proto.graph.initializer)
-
-
-def normalize_parameter_name(name: str) -> str:
-    """Normalize the forward method's parameter names that could possibly be renamed by `torch.compile`.
-
-    Args:
-        name (str): a possibly modified name
-
-    Returns:
-        str: the original name
-    """
-    if name.startswith("L_kwargs_") and name.endswith("_"):
-        return name[9:-1]
-    if name.startswith("L_") and name.endswith("_"):
-        return name[2:-1]
-    return name

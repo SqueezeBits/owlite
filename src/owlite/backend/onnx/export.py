@@ -5,29 +5,28 @@ import io
 import os
 import tempfile
 from collections.abc import Collection, Mapping, Sequence
-from typing import Any
+from typing import Any, TypeVar
 
 import onnx
-import onnxsim
-import onnxsim.model_checking
 import torch
 import torch.onnx.errors
 from onnx import ModelProto
 from onnx.shape_inference import infer_shapes, infer_shapes_path
-
-# pylint: disable=no-name-in-module
-from onnxsim.onnxsim_cpp2py_export import simplify_path
 from torch.fx.graph_module import GraphModule
 
+from ...core.constants import OWLITE_VERSION
+from ...core.logger import log
 from ...enums import ModelStatus
 from ...nn import FakeFPQuantizer, FakeQuantizer
 from ...nn.functions import clq_function
 from ...options import DynamicAxisOptions
-from ...owlite_core.constants import OWLITE_VERSION
-from ...owlite_core.logger import log
+from ..config import STRICT_ONNX_FUNCTIONALITY_CHECKING, STRICT_ONNX_SHAPE_INFERENCE
+from ..fx.filter_warnings import FilterWarningsCausedByPasses
 from ..fx.transforms import clip_narrow_range_weights, fuse_bn
 from ..signature import Signature
 from ..utils import (
+    ATOL_FP16,
+    RTOL_FP16,
     get_most_common_device,
     get_most_common_floating_point_type,
     move_tensors_to,
@@ -36,11 +35,7 @@ from ..utils import (
 from .dynamize import dynamize
 from .export_with_external_data import export_with_external_data
 from .model_checking import compare
-from .transforms import apply_onnx_transforms, convert_fp8_to_int8, convert_to_fp8
-
-# Large models (e.g. SwinTransformer) requires
-# more than 50 (default) onnxsim iterations
-os.environ["ONNXSIM_FIXED_POINT_ITERS"] = "100"
+from .optimize import optimize, optimize_path
 
 
 # pylint: disable-next=too-many-arguments, too-many-locals, invalid-name
@@ -59,13 +54,13 @@ def export(
     keep_initializers_as_inputs: bool | None = None,
     custom_opsets: Mapping[str, int] | None = None,
     export_modules_as_functions: bool | Collection[type[torch.nn.Module]] = False,
-    use_fast_export: bool = True,
-    apply_transforms: bool = True,
-    simplify: bool = True,
+    export_in_tempdir: bool = False,
+    skip_optimization: bool = False,
     check_n: int = 1,
     skip_fuse_bn: bool = False,
     skipped_optimizers: list[str] | None = None,
     dynamic_axis_options: DynamicAxisOptions | None = None,
+    ops_to_save_parameter_internally: list[tuple[str, list[int]] | str] | None = None,
 ) -> None:
     r"""Export a module into ONNX format.
 
@@ -232,24 +227,25 @@ def export(
             ``opset_version`` < 15 implies IR version < 8, which means no local function support.
             Module variables will be exported as function attributes. There are two categories of function
             attributes. Defaults to False.
-        use_fast_export (bool, optional): If True, export process will be done in memory. If `module` with total
-            parameter size larger than 2GB, this flag will be automatically set to `False`. If False, temporary
-            export process will be done using temporary files. Defaults to True.
-        apply_transforms (bool, optional): If True, ONNX transforms defined by SqueezeBits.inc will be applied for
-            model optimization. If False, ONNX transformations will be skipped. However, turning this flag to `False`
-            is experimental and might yield unexpected behavior. Defaults to True.
-        simplify (bool, optional): If True, onnx-simplifier will be run. If False, onnx-simplifier will be skipped.
-            Defaults to True.
-        check_n (int, optional): Only available when `simplify=True`. The number of times to run check for the
-            simplified ONNX proto after onnx-simplifier. Defaults to 1.
-        skip_fuse_bn (bool, optional): Only available when `simplify=True`. Whether to skip batchnorm-fusion.
+        export_in_tempdir (bool, optional): If True, the exporting process will be performed in a temporary directory
+            instead of in the CPU memory. If `module` has total parameter size larger than 2GB, this flag will be
+            automatically set to True. Defaults to False.
+        skip_optimization (bool, optional): If False, the exported ONNX model proto will be optimized.
+            If True, the optimization will be skipped. However, turning this flag to False is for debugging purpose only
+            and might cause unexpected behavior. Defaults to False.
+        check_n (int, optional): Only available when `skip_optimization=False`. The number of times to check
+            functionality of the optimized ONNX proto against the original one with randomly generated inputs.
+            Defaults to 1.
+        skip_fuse_bn (bool, optional): Only available when `skip_optimization=False`. Whether to skip batchnorm-fusion.
             Defaults to False.
-        skipped_optimizers (list[str] | None, optional): Only available when `simplify=True`. The list of
+        skipped_optimizers (list[str] | None, optional): Only available when `skip_optimization=False`. The list of
             onnx-simplifier passes to skip. Defaults to None.
             See https://github.com/onnx/optimizer/tree/master/onnxoptimizer/passes for available passes.
         dynamic_axis_options (DynamicAxisOptions | None, optional): A `DynamicAxisOptions` object indicating
             which input tensor(s) should be configured with a dynamic axis.
             Defaults to None.
+        ops_to_save_parameter_internally (list[tuple[str, list[int]] | str] | None, optional): (deprecated) ONNX
+            operation types to store parameter within the ONNX file. Defaults to None.
 
     Raises:
         TypeError: If `f` is not a string.
@@ -262,6 +258,12 @@ def export(
     """
     if not isinstance(f, str):
         raise TypeError("owlite.onnx.export requires the argument `f` to be a string.")
+
+    if ops_to_save_parameter_internally and len(ops_to_save_parameter_internally):
+        log.warning("Saving parameters internally might cause unexpected error as it is deprecated since v2.2.0")
+
+    if module.training:
+        log.warning("Exporting a module in training mode to ONNX might corrupt the functionality")  # UX
 
     if isinstance(module, GraphModule):
         if module.meta.get("status") == ModelStatus.COMPRESSED:
@@ -287,44 +289,41 @@ def export(
     if size_in_gigabytes >= 2:
         log.warning(
             f"Model has total parameter size larger than 2 GB ({size_in_gigabytes:.2f} GB)."
-            '"use_fast_export" will be set to False'
+            '"export_in_tempdir" will be set to True'
         )
-        use_fast_export = False
+        export_in_tempdir = True
 
-    export_function, optimize_function = (_export, _optimize) if use_fast_export else (_export_path, _optimize_path)
+    export_function = _export_path if export_in_tempdir else _export
 
-    if opset_version is None:
-        opset_version = 17
+    if skip_fuse_bn:
+        if skipped_optimizers is None:
+            skipped_optimizers = []
+        skipped_optimizers.append("ConvBNFusion")
 
     if input_names is None:
         input_names = get_default_input_names(module, args)
-    onnx_proto = export_function(
-        module,
-        args=args,
-        export_params=export_params,
-        verbose=verbose,
-        training=training,
-        input_names=input_names,
-        output_names=output_names,
-        operator_export_type=operator_export_type,
-        opset_version=opset_version,
-        do_constant_folding=do_constant_folding,
-        keep_initializers_as_inputs=keep_initializers_as_inputs,
-        custom_opsets=custom_opsets,
-        export_modules_as_functions=export_modules_as_functions,
-    )
 
-    if skipped_optimizers is None:
-        skipped_optimizers = ["fuse_qkv", "fuse_consecutive_log_softmax"]
+    log.debug(f"skipped optimizers: {skipped_optimizers}")
 
-    onnx_proto = optimize_function(
-        onnx_proto,
-        apply_transforms=apply_transforms,
-        simplify=simplify,
-        check_n=check_n,
-        skip_fuse_bn=skip_fuse_bn,
-        skipped_optimizers=skipped_optimizers,
-    )
+    with FilterWarningsCausedByPasses():
+        onnx_proto = export_function(
+            module,
+            args=args,
+            export_params=export_params,
+            verbose=verbose,
+            training=training,
+            input_names=input_names,
+            output_names=output_names,
+            operator_export_type=operator_export_type,
+            opset_version=opset_version,
+            do_constant_folding=do_constant_folding,
+            keep_initializers_as_inputs=keep_initializers_as_inputs,
+            custom_opsets=custom_opsets,
+            export_modules_as_functions=export_modules_as_functions,
+            skip_optimization=skip_optimization,
+            skipped_optimizers=skipped_optimizers,
+            check_n=check_n,
+        )
 
     if dynamic_axis_options is not None:
         onnx_proto = dynamize(onnx_proto, dynamic_axis_options)
@@ -345,10 +344,16 @@ def export(
         # os.remove is required since export_to_onnx_with_external_data opens the external data file with mode='r+b'
         os.remove(abs_location)
 
-    export_with_external_data(onnx_proto, f, location=location, size_threshold=0)
+    export_with_external_data(
+        onnx_proto,
+        f,
+        location=location,
+        size_threshold=0,
+        ops_to_save_parameter_internally=ops_to_save_parameter_internally,
+    )
 
 
-# pylint: disable=missing-function-docstring, broad-exception-caught
+# pylint: disable=missing-function-docstring, broad-exception-caught, too-many-arguments
 def _export(
     module: torch.nn.Module,
     args: tuple[Any, ...] | torch.Tensor,
@@ -363,6 +368,9 @@ def _export(
     keep_initializers_as_inputs: bool | None = None,
     custom_opsets: Mapping[str, int] | None = None,
     export_modules_as_functions: bool | Collection[type[torch.nn.Module]] = False,
+    skip_optimization: bool = False,
+    skipped_optimizers: list[str] | None = None,
+    check_n: int = 1,
 ) -> ModelProto:
     with io.BytesIO() as f:
         log.debug("Running torch.onnx.export")
@@ -383,10 +391,21 @@ def _export(
             export_modules_as_functions=export_modules_as_functions,
         )
         f.seek(0)
-        onnx_proto = onnx.load(f)
-        return infer_shapes(onnx_proto, check_type=True, data_prop=True)
+        model_proto = _run_shape_inference(onnx.load(f))
+        if skip_optimization:
+            return model_proto
+
+        optimized_proto = optimize(model_proto, skipped_optimizers=skipped_optimizers)
+        if optimized_proto is not model_proto:
+            _check_functionality(
+                optimized_proto,
+                model_proto,
+                check_n=check_n,
+            )
+        return optimized_proto
 
 
+# pylint: disable-next=too-many-arguments, too-many-locals
 def _export_path(
     module: torch.nn.Module,
     args: tuple[Any, ...] | torch.Tensor,
@@ -401,14 +420,17 @@ def _export_path(
     keep_initializers_as_inputs: bool | None = None,
     custom_opsets: Mapping[str, int] | None = None,
     export_modules_as_functions: bool | Collection[type[torch.nn.Module]] = False,
+    skip_optimization: bool = False,
+    skipped_optimizers: list[str] | None = None,
+    check_n: int = 1,
 ) -> ModelProto:
     with tempfile.TemporaryDirectory() as tempdir:
-        model_path = os.path.join(tempdir, "model.onnx")
-        log.debug(f"Running torch.onnx.export with output path: {model_path}")
+        log.debug(f"Running torch.onnx.export in in {tempdir}")
+        input_path = os.path.join(tempdir, "model.onnx")
         torch.onnx.export(
             module,
             args=args,
-            f=model_path,
+            f=input_path,
             export_params=export_params,
             verbose=verbose,
             training=training,
@@ -421,122 +443,18 @@ def _export_path(
             custom_opsets=custom_opsets,
             export_modules_as_functions=export_modules_as_functions,
         )
-        output_path = os.path.join(tempdir, "typed_model.onnx")
-        infer_shapes_path(model_path, output_path, check_type=True, data_prop=True)
-        log.debug(f"Loading ONNX proto from {output_path}")
-        return onnx.load(output_path)
+        typed_onnx_path = _run_shape_inference_path(input_path, os.path.join(tempdir, "typed_model.onnx"))
+        if skip_optimization:
+            log.debug(f"Loading ONNX proto from {typed_onnx_path}")
+            return onnx.load(typed_onnx_path)
 
-
-def _optimize(
-    onnx_proto: ModelProto,
-    apply_transforms: bool = True,
-    simplify: bool = True,
-    check_n: int = 1,
-    skip_fuse_bn: bool = False,
-    skipped_optimizers: list[str] | None = None,
-) -> ModelProto:
-    modified_proto = onnx_proto
-    try:
-        if simplify:
-            modified_proto, name_list = convert_fp8_to_int8(modified_proto)
-            log.debug("Running onnxsim.simplify")
-            modified_proto, _ = onnxsim.simplify(
-                modified_proto,
-                check_n=0,
-                skip_fuse_bn=skip_fuse_bn,
-                skipped_optimizers=skipped_optimizers,
-            )
-            # onnxsim produces anonymous nodes problematic for creating ONNXToFXMap
-            modified_proto = convert_to_fp8(modified_proto, name_list)
-            modified_proto = name_anonymous_nodes(modified_proto)
-            if len([*modified_proto.graph.node]) == 0:
-                log.warning("All nodes are constant-folded by onnxsim.")
-    except Exception as e:
-        log.warning(f"ONNX simplifier failed with error: {e}")  # UX
-        log.error(
-            "This model cannot be compressed by OwLite. Please resolve the above error from onnx-simplifier."
-        )  # UX
-
-    if apply_transforms:
-        modified_proto = apply_onnx_transforms(modified_proto)
-
-    if modified_proto is not onnx_proto:
-        log.debug("Checking modified model")
-        try:
-            ok = compare(modified_proto, onnx_proto, n_times=check_n)
-            if not ok:
-                log.warning("The output has been changed after the optimization")
-        except Exception as e:
-            log.warning(f"Failed to compare optimized ONNX against the original one - {e}")
-            ok = False
-
-    return modified_proto
-
-
-def _optimize_path(
-    onnx_proto: ModelProto,
-    apply_transforms: bool = True,
-    simplify: bool = True,
-    check_n: int = 1,
-    skip_fuse_bn: bool = False,
-    skipped_optimizers: list[str] | None = None,
-) -> ModelProto:
-    with tempfile.TemporaryDirectory() as tempdir:
-        output_path = os.path.join(tempdir, "model.onnx")
-        onnx.save(
-            onnx_proto,
-            output_path,
-            save_as_external_data=True,
-            all_tensors_to_one_file=True,
-            location="model.bin",
+        optimized_onnx_path = optimize_path(
+            typed_onnx_path, os.path.join(tempdir, "optimized_model.onnx"), skipped_optimizers=skipped_optimizers
         )
-        modified_proto = onnx_proto
-        try:
-            if simplify:
-                log.debug("Running onnxsim.simplify_path")
-                simplified_output_path = os.path.join(tempdir, "simple_model.onnx")
-                if skip_fuse_bn:
-                    if skipped_optimizers is None:
-                        skipped_optimizers = []
-                    skipped_optimizers.append("fuse_bn_into_conv")
-                ok = simplify_path(
-                    output_path,
-                    simplified_output_path,
-                    skipped_optimizers,
-                    True,
-                    True,
-                    10 * (1 << 30),  # 10 GB
-                )
-                if not ok:
-                    log.warning("ONNX simplifier failed")
-                    return onnx_proto
-                log.debug(f"Loading simplified ONNX proto from {simplified_output_path}")
-                modified_proto = onnx.load(simplified_output_path)
-                # onnxsim produces anonymous nodes problematic for creating ONNXToFXMap
-                modified_proto = name_anonymous_nodes(modified_proto)
-                if len([*modified_proto.graph.node]) == 0:
-                    log.warning("All nodes are constant-folded by onnxsim.")
-        except Exception as e:
-            log.warning(f"ONNX simplifier failed with error: {e}")  # UX
-            log.error(
-                "This model cannot be compressed by OwLite. Please resolve the above error from onnx-simplifier."
-            )  # UX
-
-        if apply_transforms:
-            transformed_output_path = os.path.join(tempdir, "transformed_model.onnx")
-            log.debug(f"Applying ONNX transforms with output path: {transformed_output_path}")
-            modified_proto = apply_onnx_transforms(modified_proto, transformed_output_path)
-
-        if modified_proto is not onnx_proto:
-            log.debug("Checking modified model")
-            try:
-                ok = compare(simplified_output_path, output_path, check_n, None, None, None)
-                if not ok:
-                    log.warning("The output has been changed after the optimization")
-            except Exception as e:
-                log.warning(f"Failed to compare optimized ONNX against the original one - {e}")
-                ok = False
-        return modified_proto
+        if optimized_onnx_path != typed_onnx_path:
+            _check_functionality(optimized_onnx_path, input_path, check_n=check_n)
+        log.debug(f"Loading ONNX proto from {optimized_onnx_path}")
+        return onnx.load(optimized_onnx_path)
 
 
 def name_anonymous_nodes(onnx_proto: ModelProto) -> ModelProto:
@@ -624,3 +542,65 @@ def check_fake_quantization_condition(model: GraphModule) -> bool:
                 )
                 raise ValueError("The zero point is out of range")
     return True
+
+
+ModelProtoOrPath = TypeVar("ModelProtoOrPath", str, onnx.ModelProto)
+
+
+def _check_functionality(
+    optimized_model: ModelProtoOrPath,
+    original_model: ModelProtoOrPath,
+    *,
+    check_n: int = 1,
+) -> None:
+    log.debug("Checking optimized model's functionality")
+    try:
+        if compare(optimized_model, original_model, n_times=check_n, rtol=RTOL_FP16, atol=ATOL_FP16):
+            return
+    except Exception as e:
+        if STRICT_ONNX_FUNCTIONALITY_CHECKING:
+            log.error(
+                f"Functionality checking failed with the following exception: {e}\n"
+                "You can ignore this error by setting the environment variable "
+                "OWLITE_STRICT_ONNX_FUNCTIONALITY_CHECKING=0"
+            )  # UX
+            raise RuntimeError("ONNX functionality checking failed") from e
+        log.warning(f"Failed to check the functionality of the optimized ONNX. ({e})")  # UX
+        return
+
+    if STRICT_ONNX_FUNCTIONALITY_CHECKING:
+        log.error(
+            "The ONNX optimization has corrupted the model's functionality. "
+            "You can ignore this error by setting the environment variable OWLITE_STRICT_ONNX_FUNCTIONALITY_CHECKING=0"
+        )  # UX
+        raise RuntimeError("ONNX functionality corrupted")  # UX
+    log.warning("The ONNX optimization has corrupted the model's functionality")  # UX
+
+
+def _run_shape_inference(model: ModelProto) -> ModelProto:
+    try:
+        log.debug("Running ONNX shape inference")
+        return infer_shapes(model, check_type=True, strict_mode=STRICT_ONNX_SHAPE_INFERENCE)
+    except Exception as e:
+        _handle_exception_from_shape_inference(e)
+        return model
+
+
+def _run_shape_inference_path(input_path: str, output_path: str) -> str:
+    try:
+        log.debug("Running ONNX shape inference with paths")
+        infer_shapes_path(input_path, output_path, check_type=True, strict_mode=STRICT_ONNX_SHAPE_INFERENCE)
+        return output_path
+    except Exception as e:
+        _handle_exception_from_shape_inference(e)
+        return input_path
+
+
+def _handle_exception_from_shape_inference(e: Exception) -> None:
+    if STRICT_ONNX_SHAPE_INFERENCE:
+        log.error(
+            f"ONNX shape inference failed with the following exception: {e}\n"
+            "You can ignore this error by setting the environment variable OWLITE_STRICT_ONNX_SHAPE_INFERENCE=0"
+        )  # UX
+        raise RuntimeError("ONNX shape inference failed.") from e
+    log.warning(f"ONNX shape inference failed. ({e})")  # UX

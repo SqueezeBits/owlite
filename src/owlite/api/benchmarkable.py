@@ -12,18 +12,19 @@ import requests
 import torch
 from torch.fx.graph_module import GraphModule
 
+from ..backend.config import ONNX_OPS_TO_SAVE_PARAMETERS_INTERNALLY
 from ..backend.onnx.export import export
 from ..backend.signature import Signature
+from ..core.api_base import MAIN_API_BASE, APIBase
+from ..core.cache.device import Device
+from ..core.cli.api.login import whoami
+from ..core.constants import OWLITE_API_DEFAULT_TIMEOUT, OWLITE_REPORT_URL, OWLITE_VERSION
+from ..core.device_settings import OWLITE_DEVICE_SETTINGS
+from ..core.logger import log
+from ..core.settings import OWLITE_SETTINGS
 from ..enums.benchmark_status import BenchmarkStatus
 from ..enums.price_plan import PricePlan
 from ..options import DynamicAxisOptions, ONNXExportOptions
-from ..owlite_core.api_base import MAIN_API_BASE, APIBase
-from ..owlite_core.cache.device import Device
-from ..owlite_core.cli.api.login import whoami
-from ..owlite_core.constants import OWLITE_API_DEFAULT_TIMEOUT, OWLITE_REPORT_URL, OWLITE_VERSION
-from ..owlite_core.logger import log
-from ..owlite_core.owlite_device_settings import OWLITE_DEVICE_SETTINGS
-from ..owlite_core.owlite_settings import OWLITE_SETTINGS
 from .utils import download_file_from_url, upload_file_to_url
 
 DEVICE_API_BASE: APIBase = APIBase(
@@ -147,6 +148,7 @@ class Benchmarkable:
             (*args, kwargs),
             self.onnx_path,
             dynamic_axis_options=dynamic_axis_options,
+            ops_to_save_parameter_internally=ONNX_OPS_TO_SAVE_PARAMETERS_INTERNALLY if self.plan.paid else [],
             **(onnx_export_options.model_dump()),
         )
         log.info(f"{type(self).__name__} ONNX saved at {self.onnx_path}")  # UX
@@ -330,6 +332,7 @@ class Benchmarkable:
                     f"You can later find the results at {self.url}"
                 )  # UX
 
+            message = ""
             match benchmark_status:
                 case BenchmarkStatus.PRE_FETCHING:
                     queue_position = benchmark_info.get("pos", None)

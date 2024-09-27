@@ -9,11 +9,11 @@ from torch.fx.graph_module import GraphModule
 from typing_extensions import Self
 
 from ..backend.signature import Signature
+from ..core.api_base import DOVE_API_BASE, MAIN_API_BASE
+from ..core.cache.device import Device
+from ..core.constants import FX_CONFIGURATION_FORMAT_VERSION, OWLITE_VERSION
+from ..core.logger import log
 from ..options import CompressionOptions
-from ..owlite_core.api_base import DOVE_API_BASE, MAIN_API_BASE
-from ..owlite_core.cache.device import Device
-from ..owlite_core.constants import FX_CONFIGURATION_FORMAT_VERSION, OWLITE_VERSION
-from ..owlite_core.logger import log
 from .baseline import Baseline
 from .benchmarkable import Benchmarkable
 from .project import Project

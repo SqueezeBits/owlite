@@ -1,5 +1,6 @@
 # pylint: disable=missing-function-docstring
 import operator
+from itertools import product
 
 import torch
 from torch.fx.node import Target as FXTarget
@@ -32,15 +33,15 @@ def torch_targets(fn_name: str) -> list[TorchTarget]:
 
 def functional_targets(op_name: str) -> list[FXTarget]:
     targets: list[FXTarget] = []
-    if hasattr(torch.nn.functional, op_name):
-        targets.append(getattr(torch.nn.functional, op_name))
     inplace_op_name = f"{op_name}_"
-    if hasattr(torch.nn.functional, inplace_op_name):
-        targets.append(getattr(torch.nn.functional, inplace_op_name))
-    for i in (1, 2, 3):
-        op_name_nd = f"{op_name}{i}d"
-        if hasattr(torch.nn.functional, op_name_nd):
-            targets.append(getattr(torch.nn.functional, op_name_nd))
+    # pylint: disable-next=protected-access
+    for module, name in product((torch.nn.functional, torch._C._nn), (op_name, inplace_op_name)):
+        if hasattr(module, name):
+            targets.append(getattr(module, name))
+        for i in (1, 2, 3):
+            op_name_nd = f"{name}{i}d"
+            if hasattr(module, op_name_nd):
+                targets.append(getattr(module, op_name_nd))
     return targets
 
 
@@ -118,9 +119,6 @@ CONSTANT_TARGETS = (
     *torch_targets("full"),
     *torch_targets("full_like"),
     *torch_targets("new_full"),
-    *torch_targets("rand"),
-    *torch_targets("randn"),
-    *torch_targets("randint"),
     *torch_targets("arange"),
     *torch_targets("as_tensor"),
     *torch_targets("asarray"),
@@ -135,4 +133,17 @@ CONSTANT_TARGETS = (
     *torch_targets("logspace"),
     *torch_targets("numel"),
     *torch_targets("scalar_tensor"),
+    *torch_targets("size"),
+    *torch_targets("_shape_as_tensor"),
+)
+
+NONDETERMINISTIC_TARGETS = (
+    *torch_targets("bernoulli"),
+    *torch_targets("normal"),
+    *torch_targets("rand"),
+    *torch_targets("rand_like"),
+    *torch_targets("randn"),
+    *torch_targets("randn_like"),
+    *torch_targets("randint"),
+    *torch_targets("randint_like"),
 )

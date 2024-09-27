@@ -4,7 +4,7 @@ import requests
 from tqdm import tqdm
 from tqdm.utils import CallbackIOWrapper
 
-from ..owlite_core.logger import log
+from ..core.logger import log
 
 
 def upload_file_to_url(file_path: str, dst_url: str) -> None:
@@ -62,12 +62,15 @@ def download_file_from_url(file_url: str, path_to_save: str) -> None:
 
     resp = requests.get(file_url, stream=True)  # pylint: disable=missing-timeout
     total = int(resp.headers.get("content-length", 0))
-    with open(path_to_save, "wb") as file, tqdm(
-        total=total,
-        unit="iB",
-        unit_scale=True,
-        unit_divisor=1024,
-    ) as progress_bar:
+    with (
+        open(path_to_save, "wb") as file,
+        tqdm(
+            total=total,
+            unit="iB",
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as progress_bar,
+    ):
         for data in resp.iter_content(chunk_size=1024):
             size = file.write(data)
             progress_bar.update(size)

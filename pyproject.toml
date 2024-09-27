@@ -7,11 +7,9 @@ name="owlite"
 dynamic = ["version"]
 description = "OwLite - No-Code AI compression Toolkit"
 dependencies = [
-  "onnx_graphsurgeon==0.5.2",
-  "onnx>=1.15,<=1.16",
-  "torch>=2.1.2,<2.3",
-  "onnxruntime>=1.17,<=1.18",
-  "onnxsim",
+  "onnx>=1.15, <1.17",
+  "torch>=2.1.2,<2.5",
+  "onnxruntime>=1.17, <1.19",
   "colored",
   "yacs",
   "tabulate",
@@ -27,14 +25,17 @@ authors = [
 maintainers = [
   {name = "SqueezeBits.inc", email = "owlite@squeezebits.com"}
 ]
-requires-python = "==3.10.*"
+requires-python = ">=3.10, <3.13"
 keywords=["torch", "onnx", "graph", "quantization"]
 classifiers=[
   "Intended Audience :: Developers",
   "Intended Audience :: Education",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: GNU Affero General Public License v3",
-  "Programming Language :: Python :: 3.10 :: Only",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Topic :: Scientific/Engineering",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Software Development",
@@ -46,9 +47,15 @@ classifiers=[
 Repository = "https://github.com/SqueezeBits/owlite"
 Documentation = "https://squeezebits.gitbook.io/owlite/quick/readme"
 
-
 [project.scripts]
-owlite = "owlite.owlite_core.cli.owlite_cli:main"
+owlite = "owlite.core.cli.owlite_cli:main"
 
 [tool.setuptools.dynamic]
-version = {attr = "owlite.owlite_core.constants.OWLITE_VERSION"}
+version = {attr = "owlite.core.constants.OWLITE_VERSION"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = ["owlite-capi*"]
+
+[tool.setuptools.package-data]
+owlite = ["*.so"]

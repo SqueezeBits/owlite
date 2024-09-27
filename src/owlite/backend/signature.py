@@ -4,15 +4,15 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 
-import onnx_graphsurgeon as gs
 import torch
 from onnx import ModelProto
 from torch.fx.graph_module import GraphModule
 from typing_extensions import Self
 
+from ..core.logger import log
 from ..enums import ModelStatus
 from ..options import DynamicAxisOptions, DynamicInputOptions
-from ..owlite_core.logger import log
+from .utils import get_onnx_tensor_shape
 
 
 # TODO(huijong): replace this class with inspect.Signature
@@ -32,21 +32,20 @@ class Signature(dict[str, list[int | str | list[int]]]):
         return any(("N" in shape) or any(isinstance(s, list) for s in shape) for _, shape in self.items())
 
     @classmethod
-    def from_onnx(cls, proto_or_graph: ModelProto | gs.Graph, options: DynamicAxisOptions | None = None) -> Self:
+    def from_onnx(cls, model_proto: ModelProto, options: DynamicAxisOptions | None = None) -> Self:
         """Create the signature from an ONNX proto or an ONNX graph.
 
         Args:
-            proto_or_graph (ModelProto | gs.Graph): An ONNX proto or an ONNX graph.
+            model_proto (ModelProto): An ONNX model proto.
             options (DynamicAxisOptions | None): Optional dynamic input options. Defaults to `None`.
 
         Returns:
             Signature: The created `Signature` object.
         """
-        graph = gs.import_onnx(proto_or_graph) if isinstance(proto_or_graph, ModelProto) else proto_or_graph
         signature = cls(
-            (input_tensor.name, ["N" if isinstance(s, str) else s for s in input_tensor.shape])
-            for input_tensor in graph.inputs
-            if isinstance(input_tensor, gs.Variable) and input_tensor.shape is not None
+            (input_tensor.name, ["N" if isinstance(s, str) else s for s in input_tensor_shape])
+            for input_tensor in model_proto.graph.input
+            if (input_tensor_shape := get_onnx_tensor_shape(input_tensor)) is not None
         )
         if options is not None:
             signature.mark_dynamic_axes(options)

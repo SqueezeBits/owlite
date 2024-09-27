@@ -1,12 +1,15 @@
 from types import TracebackType
 
+import torch
 from torch.fx.graph_module import GraphModule
 from torch.nn.parallel import DataParallel, DistributedDataParallel
+from tqdm import tqdm
 
 from .backend.fx.types import GraphModuleOrDataParallel
+from .core.constants import OWLITE_CALIBRATION_ENABLE_GRAD
+from .core.logger import log
 from .enums import ModelStatus
 from .nn import FakeQuantizer
-from .owlite_core.logger import log
 
 
 def _prepare_for_calibration(model: GraphModuleOrDataParallel) -> None:
@@ -30,22 +33,23 @@ def _update_fake_quantizers(model: GraphModuleOrDataParallel) -> None:
     Args:
         model(`GraphModuleOrDataParallel`): model to calibrate.
     """
-    log.info("Updating fake quantizers based on collected data")
-    for name, module in model.named_modules(remove_duplicate=True):
-        if isinstance(module, FakeQuantizer):
-            module.calibrator.update()
-            if module.step_size.abs().max() <= 0:
-                log.error(
-                    f"({name}) : The step sizes are all zero. Make sure the data is fed to the quantizer correctly"
-                )
-                continue
-            if module.step_size.min() < 0:
-                log.warning(
-                    f"({name}) : The step size contains a negative number. Automatically changed to positive",
-                    stacklevel=2,
-                )
-                module.step_size.data = module.step_size.data.abs()
-            module.enable()
+    fake_quantizers = [m for m in model.modules() if isinstance(m, FakeQuantizer)]
+    for module in tqdm(fake_quantizers, desc="Updating fake quantizers"):
+        module.calibrator.update()
+        if module.step_size.abs().max() <= 0:
+            log.error(
+                f"FakeQuantizer({module.id}) : The step sizes are all zero."
+                "Make sure the data is fed to the quantizer correctly"
+            )
+            continue
+        if module.step_size.min() < 0:
+            log.warning(
+                f"FakeQuantizer({module.id}) : The step size contains a negative number."
+                "Automatically changed to positive",
+                stacklevel=2,
+            )
+            module.step_size.data = module.step_size.data.abs()
+        module.enable()
     if isinstance(model, DataParallel | DistributedDataParallel) and isinstance(model.module, GraphModule):
         model.module.meta["status"] = ModelStatus.CALIBRATED
     elif isinstance(model, GraphModule):
@@ -59,13 +63,18 @@ def _update_fake_quantizers(model: GraphModuleOrDataParallel) -> None:
     log.info("Updated fake quantizers. Calibration finished")  # UX
 
 
-class CalibrationContext:
-    """ContextManager for calibration."""
+class CalibrationContext(torch.set_grad_enabled):
+    """ContextManager for calibration.
+
+    CalibrationContext disables gradient calculation.
+    """
 
     def __init__(self, model: GraphModuleOrDataParallel):
+        super().__init__(mode=OWLITE_CALIBRATION_ENABLE_GRAD)
         self.model = model
 
-    def __enter__(self) -> GraphModuleOrDataParallel:
+    def __enter__(self) -> GraphModuleOrDataParallel:  # type: ignore[override]
+        super().__enter__()
         _prepare_for_calibration(self.model)
         return self.model
 
@@ -75,7 +84,9 @@ class CalibrationContext:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        _update_fake_quantizers(self.model)
+        if exc_type is None:
+            _update_fake_quantizers(self.model)
+        super().__exit__(exc_type, exc_val, exc_tb)
 
 
 def calibrate(model: GraphModuleOrDataParallel) -> CalibrationContext:

@@ -5,7 +5,7 @@ import torch
 from torch import Tensor
 from torch.utils.hooks import RemovableHandle
 
-from ..owlite_core.logger import log
+from ..core.logger import log
 
 if TYPE_CHECKING:
     from ..nn import FakeQuantizer

@@ -9,11 +9,11 @@ import torch
 from typing_extensions import Self
 
 from ...calib import PercentileCalibrator
+from ...core.logger import log
 from ...enums import PTQCalibrationType, QATBackwardType, TargetDType
 from ...nn.functions import FakeQuantizeSignature, clq_function
 from ...options.channel import Channel
 from ...options.fake_quantizer_options import FakeQuantizerOptions, map_precision_and_unsigned_to_dtype
-from ...owlite_core.logger import log
 from .granularity_mixin import PerChannelMixin, PerTensorMixin
 
 if TYPE_CHECKING:

@@ -1,7 +1,7 @@
 from enum import IntEnum
 from typing import TYPE_CHECKING
 
-from ..owlite_core.logger import log
+from ..core.logger import log
 
 if TYPE_CHECKING:
     from ..calib.calibrator import Calibrator

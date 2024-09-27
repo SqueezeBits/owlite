@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 from torch.utils.hooks import RemovableHandle
 
-from ..owlite_core.logger import log
+from ..core.logger import log
 from .calibrator import Calibrator
 
 if TYPE_CHECKING:
@@ -52,22 +52,21 @@ class MinmaxCalibrator(Calibrator):
                     "During calibration, calibration attributions should be initialized, but None was provided"
                 )
             _input = inputs[0].clone()
-            with torch.no_grad():
-                if module.channel is not None:
-                    axis = module.channel.axis
-                    (other_dims := list(range(_input.dim()))).remove(axis)
-                    _input = _input.permute(axis, *other_dims)  # make channel dim is 0
-                    new_max = _input.reshape(_input.size()[0], -1).max(dim=1).values.clone()
-                    new_min = _input.reshape(_input.size()[0], -1).min(dim=1).values.clone()
-                else:
-                    new_max = _input.max().clone()
-                    new_min = _input.min().clone()
-                calibrator.max_value.data = torch.maximum(
-                    new_max.to(calibrator.max_value.device), calibrator.max_value
-                ).data
-                calibrator.min_value.data = torch.minimum(
-                    new_min.to(calibrator.min_value.device), calibrator.min_value
-                ).data
+            if module.channel is not None:
+                axis = module.channel.axis
+                (other_dims := list(range(_input.dim()))).remove(axis)
+                _input = _input.permute(axis, *other_dims)  # make channel dim is 0
+                new_max = _input.reshape(_input.size()[0], -1).max(dim=1).values.clone()
+                new_min = _input.reshape(_input.size()[0], -1).min(dim=1).values.clone()
+            else:
+                new_max = _input.max().clone()
+                new_min = _input.min().clone()
+            calibrator.max_value.data = torch.maximum(
+                new_max.to(calibrator.max_value.device), calibrator.max_value
+            ).data
+            calibrator.min_value.data = torch.minimum(
+                new_min.to(calibrator.min_value.device), calibrator.min_value
+            ).data
             return output
 
         # ~define forward hook function

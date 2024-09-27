@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING, Any
 import torch
 from torch.utils.hooks import RemovableHandle
 
-from ..owlite_core.logger import log
+from ..core.constants import OWLITE_CALIBRATOR_HISTOGRAM_SIZE
+from ..core.logger import log
 from .calibrator import Calibrator
 
 if TYPE_CHECKING:
@@ -15,8 +16,8 @@ class HistogramCalibrator(Calibrator, ABC):
     """Histogram Calibrator Class.
 
     Attributes:
-        histograms(`list[torch.Tensor]`): list of histogram counts. Each element defaults to [0, ..., 0], len = 2048.
-        bin_edges(`list[torch.Tensor]`): histogram edges. Each element defaults to [0, ..., 0], len = 2049.
+        histograms(`list[torch.Tensor]`): list of histogram counts. Each element defaults to [0, ..., 0].
+        bin_edges(`list[torch.Tensor]`): histogram edges. Each element defaults to [0, ..., 0].
     """
 
     def __init__(self, quantizer: "FakeQuantizer"):
@@ -42,38 +43,36 @@ class HistogramCalibrator(Calibrator, ABC):
 
             if module.symmetric and module.unsigned and inputs[0].min() < 0:
                 log.warning(
-                    "The unsigned fake quantizer has a negative number as input. "
-                    "It will automatically convert to a signed",
+                    f"An unsigned fake quantizer (id: '{module.id}') called with a tensor containing a negative value. "
+                    "It will be automatically converted to a signed fake quantizer",
                     stacklevel=2,
-                )
+                )  # UX
                 module.invert_signedness()
 
-            with torch.no_grad():
-                new_input = []
-                if module.per_channel and (channel := module.channel) is not None:
-                    for chn in range(channel.size):
-                        _input_chn = torch.select(_input, channel.axis, chn)
-                        new_input.append(_input_chn)
-                else:
-                    new_input.append(_input)
+            new_input = []
+            if module.per_channel and (channel := module.channel) is not None:
+                for chn in range(channel.size):
+                    _input_chn = torch.select(_input, channel.axis, chn)
+                    new_input.append(_input_chn)
+            else:
+                new_input.append(_input)
 
-                # _histc_cuda does not have a deterministic implementation
-                _deterministic_enable_status = torch.are_deterministic_algorithms_enabled()
-                torch.use_deterministic_algorithms(False, warn_only=True)
-                if module.symmetric:
-                    _accumulate_input_to_abs_histogram(calibrator, new_input)
-                else:
-                    _accumulate_input_to_histogram(calibrator, new_input)
+            # _histc_cuda does not have a deterministic implementation
+            _deterministic_enable_status = torch.are_deterministic_algorithms_enabled()
+            torch.use_deterministic_algorithms(False, warn_only=True)
+            if module.symmetric:
+                _accumulate_input_to_abs_histogram(calibrator, new_input)
+            else:
+                _accumulate_input_to_histogram(calibrator, new_input)
 
-                # allocate deterministic algorithms to original state
-                torch.use_deterministic_algorithms(_deterministic_enable_status, warn_only=True)
+            # allocate deterministic algorithms to original state
+            torch.use_deterministic_algorithms(_deterministic_enable_status, warn_only=True)
 
             return output
 
         # ~define forward hook function
 
         # set histogram, bin_edges attr and register forward hook
-        _histogram_size = 2048
         if (channel := self.quantizer.channel) is not None:
             channel_size = channel.size
         else:
@@ -87,8 +86,8 @@ class HistogramCalibrator(Calibrator, ABC):
             )
             raise ValueError("The histogram attributions are already set before the calibration is prepared")
 
-        self.histograms = [torch.zeros(_histogram_size).to(device) for _ in range(channel_size)]
-        self.bin_edges = [torch.zeros(_histogram_size + 1).to(device) for _ in range(channel_size)]
+        self.histograms = [torch.zeros(OWLITE_CALIBRATOR_HISTOGRAM_SIZE).to(device) for _ in range(channel_size)]
+        self.bin_edges = [torch.zeros(OWLITE_CALIBRATOR_HISTOGRAM_SIZE + 1).to(device) for _ in range(channel_size)]
 
         self.hook_handler = self.quantizer.register_forward_hook(histogram_forward_hook_func)
         return self.hook_handler

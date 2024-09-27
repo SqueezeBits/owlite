@@ -6,9 +6,9 @@ from packaging.version import Version
 from pydantic import Field
 from typing_extensions import Self
 
+from ..core.constants import FX_CONFIGURATION_FORMAT_VERSION
+from ..core.logger import log
 from ..enums import PTQCalibrationType, TargetDType
-from ..owlite_core.constants import FX_CONFIGURATION_FORMAT_VERSION
-from ..owlite_core.logger import log
 from .channel import Channel
 from .fake_quantizer_options import FakeQuantizerOptions
 from .options_dict import OptionsDict

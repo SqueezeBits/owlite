@@ -1,9 +1,9 @@
 from pydantic import BaseModel, Field
 from typing_extensions import Self
 
+from ..core.cache.device import Device
+from ..core.logger import log
 from ..enums import Runtime
-from ..owlite_core.cache.device import Device
-from ..owlite_core.logger import log
 
 
 class ONNXExportOptions(BaseModel):

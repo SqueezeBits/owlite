@@ -6,7 +6,7 @@ import onnx
 import onnx.checker
 import onnxruntime as rt
 
-from ...owlite_core.logger import log
+from ...core.logger import log
 from ..utils import compare_nested_outputs
 
 Tensors = dict[str, np.ndarray]

@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 
 from lazy_imports import LazyImporter
 
-from .owlite_core.constants import OWLITE_VERSION as __version__  # noqa: N811
+from .core.constants import OWLITE_VERSION as __version__  # noqa: N811
 
 _import_structure = {
     "backend": [

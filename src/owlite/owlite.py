@@ -13,13 +13,13 @@ from torch.nn.parallel import DataParallel, DistributedDataParallel
 from .api import Baseline, Experiment, Project
 from .backend.fx.trace import symbolic_trace
 from .compression import compress
+from .core.cli.device import connect_to_first_available_device
+from .core.constants import OWLITE_REPORT_URL, OWLITE_VERSION
+from .core.device_settings import OWLITE_DEVICE_SETTINGS
+from .core.github_utils import get_latest_version_from_github
+from .core.logger import log
+from .core.settings import OWLITE_SETTINGS
 from .options import DynamicAxisOptions, DynamicInputOptions, ONNXExportOptions
-from .owlite_core.cli.device import connect_to_first_available_device
-from .owlite_core.constants import OWLITE_REPORT_URL, OWLITE_VERSION
-from .owlite_core.github_utils import get_latest_version_from_github
-from .owlite_core.logger import log
-from .owlite_core.owlite_device_settings import OWLITE_DEVICE_SETTINGS
-from .owlite_core.owlite_settings import OWLITE_SETTINGS
 
 
 @dataclass
@@ -304,6 +304,7 @@ class OwLite:
 
         return model
 
+    @torch.no_grad()
     def export(
         self,
         model: GraphModule,
@@ -563,7 +564,11 @@ class OwLite:
         Notes:
         **Benchmarking Considerations for Free Plan Users**
         >
-        Benchmarking a model typically involves uploading its weight files for the most accurate results. However, if you're on the OwLite free plan, uploading weight files isn't currently supported. To address this, OwLite automatically generates random weights for your model's ONNX graph, allowing you to benchmark without needing your own weights. It's important to keep in mind that benchmarks using randomly generated weights might be less accurate compared to those using your actual model weights.
+        Benchmarking a model typically involves uploading its weight files for the most accurate results. However, if
+        you're on the OwLite free plan, uploading weight files isn't currently supported. To address this, OwLite
+        automatically generates random weights for your model's ONNX graph, allowing you to benchmark without needing
+        your own weights. It's important to keep in mind that benchmarks using randomly generated weights might be less
+        accurate compared to those using your actual model weights.
         >
         **Interrupting Benchmarking**
         >

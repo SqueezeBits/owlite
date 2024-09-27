@@ -4,10 +4,10 @@ from itertools import product
 import torch
 from torch.fx.node import Node
 
+from ...core.logger import log
 from ...nn import FakeINTQuantizer, FakeQuantizer, QLinear
 from ...nn.modules import UnaryNeuralQModuleMixin, promote_to_qmodule
 from ...options.compression_option import NodeCompressionOptions
-from ...owlite_core.logger import log
 from ..utils import nodestr
 from .edge import AllInputNodes, Args, Kwargs
 from .node import get_target_module, get_torch_target
