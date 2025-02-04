@@ -562,14 +562,6 @@ class OwLite:
         plan only)
 
         Notes:
-        **Benchmarking Considerations for Free Plan Users**
-        >
-        Benchmarking a model typically involves uploading its weight files for the most accurate results. However, if
-        you're on the OwLite free plan, uploading weight files isn't currently supported. To address this, OwLite
-        automatically generates random weights for your model's ONNX graph, allowing you to benchmark without needing
-        your own weights. It's important to keep in mind that benchmarks using randomly generated weights might be less
-        accurate compared to those using your actual model weights.
-        >
         **Interrupting Benchmarking**
         >
         The benchmarking process can be interrupted at any time by pressing Ctrl+C. This will gracefully terminate
@@ -664,28 +656,6 @@ class OwLite:
                 - testProject_SampleModel_dynamic.onnx # created by owlite.export()
                 - testProject_SampleModel_dynamic.bin # created by owlite.export()
                 - testProject_SampleModel_dynamic.engine
-        ```
-
-        **Free plan user**
-
-        However, please note that the Free plan does not allow you to export TensorRT engine files with the model's
-        weights. Instead, a random weight engine will be created and you can only query its latency.
-        You will not be able to get the generated engine.
-
-        ```
-        OwLite [INFO] Benchmark initiated for the experiment 'dynamic' for the baseline '"sampleModel"'
-        in the project 'testProject'
-        OwLite [INFO] Benchmark requested
-        OwLite [INFO] Polling for benchmark result. You are free to Ctrl+C away. When it is done,
-        you can find the results at https://owlite.ai/project/detail/94af0e4c784fb1f
-        [.........🦉..........]
-        Benchmarking done
-        OwLite [INFO] Experiment: dynamic
-                    Latency: 0.0327148 (ms) on NVIDIA RTX A6000
-                    For more details, visit https://owlite.ai/project/detail/94af0e4c784fb1f
-        OwLite [INFO] The free plan doesn't support the engine download. Upgrade to a higher plan to download
-        the engine through OwLite with a seamless experience. Even so, OwLite still provides you ONNX
-        so that you can generate a engine independently
         ```
 
         """

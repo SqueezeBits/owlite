@@ -16,6 +16,8 @@ from onnx.external_data_helper import (
     uses_external_data,
 )
 
+from ..config import ONNX_EXTERNAL_DATA_SIZE_THRESHOLD
+
 
 def _get_all_tensors_from_graph(graph: GraphProto) -> Iterable[TensorProto]:
     return chain(
@@ -27,9 +29,10 @@ def _get_all_tensors_from_graph(graph: GraphProto) -> Iterable[TensorProto]:
 def export_with_external_data(
     model_proto: ModelProto,
     output_path: str,
+    *,
     all_tensors_to_one_file: bool = True,
     location: str | None = None,
-    size_threshold: int = 1024,
+    size_threshold: int = ONNX_EXTERNAL_DATA_SIZE_THRESHOLD,
     convert_attribute: bool = False,
     ops_to_save_parameter_internally: list[tuple[str, list[int]] | str] | None = None,
     **kwargs: Any,
@@ -46,7 +49,8 @@ def export_with_external_data(
             If not specified, will use the model name. Defaults to None.
         size_threshold (int, optional): Threshold for size of data. Only when tensor's data is >= the size_threshold
             it will be converted to external data. To convert every tensor with raw data to external data set
-            size_threshold=0. Defaults to 1024.
+            size_threshold=0. Defaults to ONNX_EXTERNAL_DATA_SIZE_THRESHOLD, which can be set via the environment
+            variable `OWLITE_ONNX_EXTERNAL_DATA_SIZE_THRESHOLD`.
         convert_attribute (bool, optional): If true, convert all tensors to external data.
             If false, convert only non-attribute tensors to external data. Defaults to False.
         ops_to_save_parameter_internally (list[tuple[str, list[int]] | str] | None, optional): (deprecated) ONNX
@@ -87,9 +91,10 @@ def export_with_external_data(
 def convert_graph_to_external_data(
     graph: GraphProto,
     base_path: str,
+    *,
     all_tensors_to_one_file: bool = True,
     location: str | None = None,
-    size_threshold: int = 1024,
+    size_threshold: int = ONNX_EXTERNAL_DATA_SIZE_THRESHOLD,
     convert_attribute: bool = False,
     ops_to_save_parameter_internally: list[tuple[str, list[int]] | str] | None = None,
 ) -> None:
@@ -107,7 +112,8 @@ def convert_graph_to_external_data(
             If not specified, will use the model name. Defaults to None.
         size_threshold (int, optional): Threshold for size of data. Only when tensor's data is >= the size_threshold
             it will be converted to external data. To convert every tensor with raw data to external data
-            set size_threshold=0. Defaults to 1024.
+            set size_threshold=0. Defaults to ONNX_EXTERNAL_DATA_SIZE_THRESHOLD, which can be set via the environment
+            variable `OWLITE_ONNX_EXTERNAL_DATA_SIZE_THRESHOLD`.
         convert_attribute (bool, optional): If true, convert all tensors to external data.
             If false, convert only non-attribute tensors to external data. Defaults to False.
         ops_to_save_parameter_internally (list[tuple[str, list[int]] | str] | None, optional): (deprecated) ONNX
@@ -115,7 +121,7 @@ def convert_graph_to_external_data(
     """
     tensors = _get_all_tensors_from_graph(graph) if convert_attribute else _get_initializer_tensors_from_graph(graph)
 
-    tensor_names_to_save_internally = []
+    tensor_names_to_save_internally: list[str] = []
     if ops_to_save_parameter_internally:
         tensor_export_configuration = {
             entry if (is_str := isinstance(entry, str)) else entry[0]: [] if is_str else entry[1]
@@ -124,7 +130,7 @@ def convert_graph_to_external_data(
         for node in graph.node:
             if (config := tensor_export_configuration.get(node.op_type, None)) is None:
                 continue
-            tensor_names_to_save_internally.extend([node.input[i] for i in config] if len(config) else node.input)
+            tensor_names_to_save_internally.extend([node.input[i] for i in config] if len(config) > 0 else node.input)
 
     if all_tensors_to_one_file:
         file_name = str(uuid.uuid1())

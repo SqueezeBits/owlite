@@ -5,6 +5,7 @@ from torch.fx.passes.infra.pass_manager import PassManager
 from ..config import FX_TRANSFORM_MAXIMUM_ITERATION
 from .passes import (
     ConnectInplaceOpsToUsers,
+    DecomposeExpm1,
     DecomposeInProjection,
     DecomposeInProjectionPacked,
     DecomposeMultiheadAttention,
@@ -79,6 +80,7 @@ def get_pass_manager(skipped_optimizers: list[PassName] | None = None) -> PassMa
         DecomposeScaledDotProductAttention,
     )
     other_rewrite_passes = (
+        DecomposeExpm1,
         DecomposeSiLU,
         FuseConsecutiveConcats,
     )

@@ -18,6 +18,9 @@ class UserInfo(BaseModel):
     name: str = Field(validation_alias=AliasChoices("name", "username"))
     plan: PricePlan = Field(validation_alias=AliasChoices("plan", "tier"))
     workgroup: str = Field(validation_alias=AliasChoices("workgroup", "workgroup_name"))
+    priority_queues_count: int = Field(
+        validation_alias=AliasChoices("priority_queues_count", "monthly_benchmark_count")
+    )
 
 
 def login(email: str, password: str) -> dict[str, str]:
@@ -83,5 +86,7 @@ def whoami() -> UserInfo:
     assert isinstance(resp, dict)
     log.debug(f"whoami response: {resp}")
     user_info = UserInfo.model_validate(resp)
-    log.debug(f"user info: {user_info.name}, {user_info.plan}, {user_info.workgroup}")
+    log.debug(
+        f"user info: {user_info.name}, {user_info.plan}, {user_info.workgroup}, {user_info.priority_queues_count}"
+    )
     return user_info

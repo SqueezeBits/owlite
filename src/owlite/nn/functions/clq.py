@@ -27,7 +27,7 @@ class CLQFunction(BaseFakeINTQuantizeFunction):
     $$
     """
 
-    @staticmethod  # pylint: disable-next=arguments-differ
+    @staticmethod  # pylint: disable-next=arguments-differ, too-many-positional-arguments
     def forward(
         ctx: Any,
         inputs: Tensor,
@@ -40,7 +40,7 @@ class CLQFunction(BaseFakeINTQuantizeFunction):
     ) -> Tensor:
         ctx.save_for_backward(inputs, step_size)
         ctx.other = grad_scale, quant_min, quant_max, axis
-        return fake_quantize(inputs, step_size.abs(), zero_point, quant_min, quant_max, axis)
+        return fake_quantize(inputs, step_size.abs(), zero_point, quant_min=quant_min, quant_max=quant_max, axis=axis)
 
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:

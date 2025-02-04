@@ -4,8 +4,8 @@
 import io
 import os
 import tempfile
-from collections.abc import Collection, Mapping, Sequence
-from typing import Any, TypeVar
+from collections.abc import Collection, Mapping
+from typing import Any
 
 import onnx
 import torch
@@ -27,9 +27,6 @@ from ..signature import Signature
 from ..utils import (
     ATOL_FP16,
     RTOL_FP16,
-    get_most_common_device,
-    get_most_common_floating_point_type,
-    move_tensors_to,
     nodestr,
 )
 from .dynamize import dynamize
@@ -38,7 +35,7 @@ from .model_checking import compare
 from .optimize import optimize, optimize_path
 
 
-# pylint: disable-next=too-many-arguments, too-many-locals, invalid-name
+# pylint: disable-next=too-many-arguments, too-many-locals, invalid-name, too-many-positional-arguments
 def export(
     module: torch.nn.Module,
     args: tuple[Any, ...] | torch.Tensor,
@@ -46,8 +43,8 @@ def export(
     export_params: bool = True,
     verbose: bool = False,
     training: torch._C._onnx.TrainingMode = torch._C._onnx.TrainingMode.EVAL,
-    input_names: Sequence[str] | None = None,
-    output_names: Sequence[str] | None = None,
+    input_names: list[str] | None = None,
+    output_names: list[str] | None = None,
     operator_export_type: torch._C._onnx.OperatorExportTypes = torch._C._onnx.OperatorExportTypes.ONNX,
     opset_version: int = 17,
     do_constant_folding: bool = True,
@@ -142,9 +139,9 @@ def export(
                 False and in training mode if model.training is True.
             * `TrainingMode.TRAINING`: export the model in training mode. Disables optimizations
                 which might interfere with training.
-        input_names (Sequence[str] | None, optional): Names to assign to the input nodes of the graph, in order.
+        input_names (list[str] | None, optional): Names to assign to the input nodes of the graph, in order.
             Names of `module.forward` arguments will be used when None is given. Defaults to None.
-        output_names (Sequence[str] | None, optional): Names to assign to the output nodes of the graph, in order.
+        output_names (list[str] | None, optional): Names to assign to the output nodes of the graph, in order.
             Defaults to None.
         operator_export_type (torch._C._onnx.OperatorExportTypes, optional):
             Defaults to `torch._C._onnx.OperatorExportTypes.ONNX`.
@@ -273,6 +270,15 @@ def export(
             )
         if opset_version < 19 and any(isinstance(submodule, FakeFPQuantizer) for submodule in module.modules()):
             raise ValueError(f"FP quantizers are supported from opset 19. But got {opset_version}")
+        if opset_version < 19 and any(
+            isinstance(submodule, FakeQuantizer) and submodule.step_size.dtype != torch.float
+            for submodule in module.modules()
+        ):
+            raise ValueError(
+                "The element type of the input `x` of ONNX QuantizeLinear can be 'bfloat16' or 'float16' "
+                f"since opset 19. Please bump up the {opset_version} to 19 or higher. "
+                "(See https://onnx.ai/onnx/operators/onnx__QuantizeLinear.html for more details.)"
+            )
         clip_narrow_range_weights(module)
         # Batch Norm Fusing
         if not skip_fuse_bn:
@@ -280,17 +286,13 @@ def export(
 
         check_fake_quantization_condition(module)
 
-    device = get_most_common_device(module)
-    dtype = get_most_common_floating_point_type(module)
-    args = move_tensors_to(args, device, dtype)
-
     size_in_gigabytes = sum(p.numel() * p.element_size() for p in module.parameters()) / (1 << 30)
-
-    if size_in_gigabytes >= 2:
+    if size_in_gigabytes >= 2 and not export_in_tempdir:
         log.warning(
-            f"Model has total parameter size larger than 2 GB ({size_in_gigabytes:.2f} GB)."
-            '"export_in_tempdir" will be set to True'
-        )
+            f"Model has total parameter size larger than 2 GB ({size_in_gigabytes:.2f} GB). "
+            "The ONNX must be exported with external data due to the 2 GB size limit of protobuf. "
+            "(See https://github.com/onnx/onnx/issues/3275 for more details.)"
+        )  # UX
         export_in_tempdir = True
 
     export_function = _export_path if export_in_tempdir else _export
@@ -348,20 +350,19 @@ def export(
         onnx_proto,
         f,
         location=location,
-        size_threshold=0,
         ops_to_save_parameter_internally=ops_to_save_parameter_internally,
     )
 
 
-# pylint: disable=missing-function-docstring, broad-exception-caught, too-many-arguments
+# pylint: disable=missing-function-docstring, broad-exception-caught, too-many-arguments, too-many-positional-arguments
 def _export(
     module: torch.nn.Module,
     args: tuple[Any, ...] | torch.Tensor,
     export_params: bool = True,
     verbose: bool = False,
     training: torch._C._onnx.TrainingMode = torch._C._onnx.TrainingMode.EVAL,
-    input_names: Sequence[str] | None = None,
-    output_names: Sequence[str] | None = None,
+    input_names: list[str] | None = None,
+    output_names: list[str] | None = None,
     operator_export_type: torch._C._onnx.OperatorExportTypes = torch._C._onnx.OperatorExportTypes.ONNX,
     opset_version: int | None = None,
     do_constant_folding: bool = True,
@@ -381,8 +382,6 @@ def _export(
             export_params=export_params,
             verbose=verbose,
             training=training,
-            input_names=input_names,
-            output_names=output_names,
             operator_export_type=operator_export_type,
             opset_version=opset_version,
             do_constant_folding=do_constant_folding,
@@ -395,7 +394,12 @@ def _export(
         if skip_optimization:
             return model_proto
 
-        optimized_proto = optimize(model_proto, skipped_optimizers=skipped_optimizers)
+        optimized_proto = optimize(
+            model_proto,
+            input_names=input_names,
+            output_names=output_names,
+            skipped_optimizers=skipped_optimizers,
+        )
         if optimized_proto is not model_proto:
             _check_functionality(
                 optimized_proto,
@@ -405,15 +409,15 @@ def _export(
         return optimized_proto
 
 
-# pylint: disable-next=too-many-arguments, too-many-locals
+# pylint: disable-next=too-many-arguments, too-many-locals, too-many-positional-arguments
 def _export_path(
     module: torch.nn.Module,
     args: tuple[Any, ...] | torch.Tensor,
     export_params: bool = True,
     verbose: bool = False,
     training: torch._C._onnx.TrainingMode = torch._C._onnx.TrainingMode.EVAL,
-    input_names: Sequence[str] | None = None,
-    output_names: Sequence[str] | None = None,
+    input_names: list[str] | None = None,
+    output_names: list[str] | None = None,
     operator_export_type: torch._C._onnx.OperatorExportTypes = torch._C._onnx.OperatorExportTypes.ONNX,
     opset_version: int | None = None,
     do_constant_folding: bool = True,
@@ -425,7 +429,7 @@ def _export_path(
     check_n: int = 1,
 ) -> ModelProto:
     with tempfile.TemporaryDirectory() as tempdir:
-        log.debug(f"Running torch.onnx.export in in {tempdir}")
+        log.debug(f"Running torch.onnx.export in {tempdir}")
         input_path = os.path.join(tempdir, "model.onnx")
         torch.onnx.export(
             module,
@@ -434,8 +438,6 @@ def _export_path(
             export_params=export_params,
             verbose=verbose,
             training=training,
-            input_names=input_names,
-            output_names=output_names,
             operator_export_type=operator_export_type,
             opset_version=opset_version,
             do_constant_folding=do_constant_folding,
@@ -448,11 +450,25 @@ def _export_path(
             log.debug(f"Loading ONNX proto from {typed_onnx_path}")
             return onnx.load(typed_onnx_path)
 
+        log.debug(f"Running ONNX optimization in {tempdir}")
         optimized_onnx_path = optimize_path(
-            typed_onnx_path, os.path.join(tempdir, "optimized_model.onnx"), skipped_optimizers=skipped_optimizers
+            typed_onnx_path,
+            os.path.join(tempdir, "optimized_model.onnx"),
+            # Setting `size_threshold` to lower value leads to loading failure from
+            # `onnxruntime.InferenceSession`, which is used for functionality checking
+            # before and after the optimization. Note that this bug is only observed
+            # with models larger than 2 GB.
+            size_threshold=1024,
+            input_names=input_names,
+            output_names=output_names,
+            skipped_optimizers=skipped_optimizers,
         )
         if optimized_onnx_path != typed_onnx_path:
-            _check_functionality(optimized_onnx_path, input_path, check_n=check_n)
+            _check_functionality(
+                optimized_onnx_path,
+                input_path,
+                check_n=check_n,
+            )
         log.debug(f"Loading ONNX proto from {optimized_onnx_path}")
         return onnx.load(optimized_onnx_path)
 
@@ -544,18 +560,23 @@ def check_fake_quantization_condition(model: GraphModule) -> bool:
     return True
 
 
-ModelProtoOrPath = TypeVar("ModelProtoOrPath", str, onnx.ModelProto)
-
-
 def _check_functionality(
-    optimized_model: ModelProtoOrPath,
-    original_model: ModelProtoOrPath,
+    optimized_model: bytes | str | onnx.ModelProto,
+    original_model: bytes | str | onnx.ModelProto,
     *,
     check_n: int = 1,
 ) -> None:
     log.debug("Checking optimized model's functionality")
     try:
-        if compare(optimized_model, original_model, n_times=check_n, rtol=RTOL_FP16, atol=ATOL_FP16):
+        if compare(
+            original_model,
+            optimized_model,
+            n_times=check_n,
+            rtol=RTOL_FP16,
+            atol=ATOL_FP16,
+            first_name="the ONNX model proto produced by `torch.onnx.export`",
+            second_name="the ONNX model proto further optimized by OwLite",
+        ):
             return
     except Exception as e:
         if STRICT_ONNX_FUNCTIONALITY_CHECKING:

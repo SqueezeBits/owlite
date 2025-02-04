@@ -39,7 +39,7 @@ class BaseFakeFPQuantizeFunction(Function):
     """
 
     @staticmethod
-    @torch.onnx.symbolic_helper.parse_args("v", "v", "v", "none", "none", "none", "i")  # type: ignore
+    @torch.onnx.symbolic_helper.parse_args("v", "v", "v", "none", "none", "none", "i")  # type: ignore # pylint: disable-next=too-many-positional-arguments
     def symbolic(
         g: jit_utils.GraphContext,
         inputs: Value,
@@ -50,7 +50,7 @@ class BaseFakeFPQuantizeFunction(Function):
         quant_max: float,
         axis: int | None,
     ) -> Value | tuple[Value, ...]:
-        r"""Define the symbolic computation graph for the function.
+        r"""Define the symbolic computation graph for fake FP8 quantization.
 
         Args:
             g (`jit_utils.GraphContext`): The graph context.
@@ -73,13 +73,17 @@ class BaseFakeFPQuantizeFunction(Function):
                 f"Got ({quant_min}, {quant_max})",
                 inputs,
             )
-        return fp8_qdq_symbolic(g, inputs, step_size, zero_point, axis)
+        zero_point = g.op("Cast", zero_point, to_i=TensorProtoDataType.FLOAT8E4M3FN)
+        quantized = g.op("QuantizeLinear", inputs, step_size, zero_point, axis_i=axis)
+        dequantized = g.op("DequantizeLinear", quantized, step_size, zero_point, axis_i=axis)
+        return dequantized
 
 
 def fake_fp8_quantize(
     inputs: Tensor,
     step_size: Tensor,
     zero_point: Tensor,
+    *,
     quant_min: float,
     quant_max: float,
     axis: int | None = None,
@@ -108,28 +112,3 @@ def fake_fp8_quantize(
     out = out.to(dtype=inputs.dtype) - zero_point
     out = out * step_size
     return out
-
-
-def fp8_qdq_symbolic(
-    g: jit_utils.GraphContext,
-    inputs: Value,
-    step_size: Value,
-    zero_point: Value,
-    axis: int | None,
-) -> Value | tuple[Value, ...]:
-    """Define the symbolic computation graph for fake FP8 quantization.
-
-    Args:
-        g (`jit_utils.GraphContext`): The graph context.
-        inputs (`torch.Value`): The input value.
-        step_size (`torch.Value`): The step size.
-        zero_point (`torch.Value`): The zero point.
-        axis (`int`, optional): The axis.
-
-    Returns:
-        Value | tuple[Value, ...]: The output value.
-    """
-    zero_point = g.op("Cast", zero_point, to_i=TensorProtoDataType.FLOAT8E4M3FN)
-    quantized = g.op("QuantizeLinear", inputs, step_size, zero_point, axis_i=axis)
-    dequantized = g.op("DequantizeLinear", quantized, step_size, zero_point, axis_i=axis)
-    return dequantized

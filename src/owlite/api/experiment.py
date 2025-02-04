@@ -55,12 +55,7 @@ class Experiment(Benchmarkable):
                 json=self.payload(format_version=str(FX_CONFIGURATION_FORMAT_VERSION), **self.version_payload),
             )
         except requests.exceptions.HTTPError as e:
-            if e.response and e.response.status_code == 403:
-                log.error(
-                    "Config settings exceed the limit. The free plan supports max. 1 OpType, 10 Layer settings. "
-                    "Please check your config again"
-                )  # UX
-            elif e.response and e.response.status_code == 426:
+            if e.response and e.response.status_code == 426:
                 log.error(
                     f"Your current version ({OWLITE_VERSION}) is not supported. "
                     "Please update the package to the latest version with the following command: "
@@ -97,6 +92,11 @@ class Experiment(Benchmarkable):
                         "Please check if OwLite successfully uploaded the baseline model. "
                         "If not, try using `owl.export(model).`"
                     )  # UX
+            elif e.response is not None and e.response.status_code == 403:
+                log.error(
+                    "Free Plan users can create up to 20 Experiments. In this execution, "
+                    "OwLite functions will not be executed. Please delete any unused Experiment and try again."
+                )  # UX
             raise e
         assert isinstance(res, dict)
         experiment = cls(name=name, baseline=baseline, device=device, has_config=False)
@@ -180,6 +180,11 @@ class Experiment(Benchmarkable):
                     f"Cannot duplicate experiment. Experiment '{self.name}' doesn't have compression configuration"
                 )  # UX
                 raise RuntimeError("Compression configuration not found") from e
+            if e.response is not None and e.response.status_code == 403:
+                log.error(
+                    "Free Plan users can create up to 20 Experiments. In this execution, "
+                    "OwLite functions will not be executed. Please delete any unused Experiment and try again."
+                )  # UX
             raise e
         assert isinstance(resp, dict)
         cloned_experiment = type(self)(

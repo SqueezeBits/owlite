@@ -9,12 +9,18 @@ FX_TRANSFORM_MAXIMUM_ITERATION = int(os.environ.get("OWLITE_FX_TRANSFORM_MAXIMUM
 # Maximum iteration limit for ONNX transformations.
 ONNX_TRANSFORM_MAXIMUM_ITERATION = int(os.environ.get("OWLITE_ONNX_TRANSFORM_MAXIMUM_ITERATION", 100))
 
+# All ONNX initialized tensors with size (in bytes) greater than or equal to this value
+# will be saved at external data file. OwLite will write all initialized tensors at external
+# data file by default.
+# Note that, `onnxruntime.InferenceSession` might fail to load models larger than 2 GB
+# with all initializers saved externally, onnxruntime. In such case, set this value to 1024.
+ONNX_EXTERNAL_DATA_SIZE_THRESHOLD = int(os.environ.get("OWLITE_ONNX_EXTERNAL_DATA_SIZE_THRESHOLD", 0))
+
 # Run strict shape inference
 STRICT_ONNX_SHAPE_INFERENCE = os.environ.get("OWLITE_STRICT_ONNX_SHAPE_INFERENCE", "1") == "1"
 
 # Run strict invariance checking
 STRICT_ONNX_FUNCTIONALITY_CHECKING = os.environ.get("OWLITE_STRICT_ONNX_FUNCTIONALITY_CHECKING", "1") == "1"
-
 
 
 # [DISCLAIMER] Configurations below are deprecated and may be removed in later versions.

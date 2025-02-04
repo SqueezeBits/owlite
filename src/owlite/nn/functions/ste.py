@@ -59,7 +59,7 @@ class FakeQuantizeSTEFunction(BaseFakeINTQuantizeFunction):
     ![STE image](https://github.com/SqueezeBits/owlite/assets/116608095/2d0e071b-394c-4cd1-a68e-33b9a6e18ae6)
     """
 
-    @staticmethod  # pylint: disable-next=arguments-differ
+    @staticmethod  # pylint: disable-next=arguments-differ, too-many-positional-arguments
     def forward(
         ctx: Any,
         inputs: Tensor,
@@ -74,7 +74,7 @@ class FakeQuantizeSTEFunction(BaseFakeINTQuantizeFunction):
         lower_bound = quant_min * step_size
         upper_bound = quant_max * step_size
         ctx.other = lower_bound, upper_bound
-        return fake_quantize(inputs, step_size, zero_point, quant_min, quant_max, axis)
+        return fake_quantize(inputs, step_size, zero_point, quant_min=quant_min, quant_max=quant_max, axis=axis)
 
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:

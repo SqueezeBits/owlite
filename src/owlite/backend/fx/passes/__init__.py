@@ -1,6 +1,7 @@
 from typing import Literal
 
 from .connect_inplace_ops_to_users import ConnectInplaceOpsToUsers
+from .decompose_expm1 import DecomposeExpm1
 from .decompose_in_projection import DecomposeInProjection
 from .decompose_in_projection_packed import DecomposeInProjectionPacked
 from .decompose_multi_head_attention_forward import DecomposeMultiHeadAttentionForward
@@ -19,6 +20,7 @@ from .fuse_consecutive_concats import FuseConsecutiveConcats
 
 PassName = Literal[
     "ConnectSetitemToItsUsers",
+    "DecomposeExpm1",
     "DecomposeInProjectionPacked",
     "DecomposeInProjection",
     "DecomposeMultiHeadAttentionForward",

@@ -1,8 +1,10 @@
+from collections import Counter
+
 import torch
 from torch.fx import GraphModule
 from torch.fx.passes.infra.pass_base import PassBase, PassResult
 
-from ...utils import get_most_common_device
+from ....core.logger import log
 
 
 class FixHardCodedDevice(PassBase):
@@ -45,3 +47,19 @@ class FixHardCodedDevice(PassBase):
                 node.args = args
 
         return PassResult(graph_module, True)
+
+
+def get_most_common_device(model: torch.nn.Module) -> torch.device:
+    """Find the most common device where the parameters of the model reside.
+
+    Args:
+        model (torch.nn.Module): a model
+    Returns:
+        torch.device: the most common device where the parameters of the model reside.
+    """
+    counter = Counter(p.device for p in model.parameters())
+    if len(counter) == 0:
+        return torch.device("cpu")
+    if len(counter) > 1:
+        log.warning(f"The model parameters reside on more than 1 devices: {set(counter.elements())}")
+    return counter.most_common(1)[0][0]

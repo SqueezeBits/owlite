@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from threading import Lock
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -18,6 +19,7 @@ class HistogramCalibrator(Calibrator, ABC):
     Attributes:
         histograms(`list[torch.Tensor]`): list of histogram counts. Each element defaults to [0, ..., 0].
         bin_edges(`list[torch.Tensor]`): histogram edges. Each element defaults to [0, ..., 0].
+        lock(`threading.Lock`): lock to prevent race conditions in accumulation with DataParallel
     """
 
     def __init__(self, quantizer: "FakeQuantizer"):
@@ -25,6 +27,7 @@ class HistogramCalibrator(Calibrator, ABC):
         super().__init__(quantizer)
         self.histograms: list[torch.Tensor] = []
         self.bin_edges: list[torch.Tensor] = []
+        self.lock: Lock = Lock()
 
     def prepare(self) -> RemovableHandle:
         """Prepare forward hook function."""
@@ -39,7 +42,9 @@ class HistogramCalibrator(Calibrator, ABC):
                 log.error(f"`histogram`: {calibrator.histograms}\n`bin_edge`: {calibrator.bin_edges}")
                 raise ValueError("During calibration, calibration attributions are not initialized")
 
-            _input = inputs[0].clone()
+            _input: torch.Tensor = inputs[0].clone()
+            calibrator.input_dtype = _input.dtype
+            _input = _input.float()
 
             if module.symmetric and module.unsigned and inputs[0].min() < 0:
                 log.warning(
@@ -60,10 +65,11 @@ class HistogramCalibrator(Calibrator, ABC):
             # _histc_cuda does not have a deterministic implementation
             _deterministic_enable_status = torch.are_deterministic_algorithms_enabled()
             torch.use_deterministic_algorithms(False, warn_only=True)
-            if module.symmetric:
-                _accumulate_input_to_abs_histogram(calibrator, new_input)
-            else:
-                _accumulate_input_to_histogram(calibrator, new_input)
+            with calibrator.lock:
+                if module.symmetric:
+                    _accumulate_input_to_abs_histogram(calibrator, new_input)
+                else:
+                    _accumulate_input_to_histogram(calibrator, new_input)
 
             # allocate deterministic algorithms to original state
             torch.use_deterministic_algorithms(_deterministic_enable_status, warn_only=True)
@@ -122,6 +128,7 @@ def _accumulate_input_to_abs_histogram(calibrator: HistogramCalibrator, inputs: 
             )
             bin_edge.data = torch.linspace(0, local_max, histc_bin + 1).to(bin_edge.device)
         elif calibrator.quantizer.per_channel:
+            # Owlite assumes that per-channel quantization applies only to weights.
             break
         else:
             if local_max > bin_edge[-1]:

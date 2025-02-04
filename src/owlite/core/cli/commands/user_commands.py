@@ -3,6 +3,7 @@
 # pylint: disable=unnecessary-lambda, too-few-public-methods
 from argparse import Namespace, _SubParsersAction
 
+from ....enums.price_plan import PricePlan
 from ...logger import log
 from .. import BaseOwLiteCLICommand
 from ..api.login import whoami
@@ -56,6 +57,8 @@ class WhoamiCommand(BaseUserCommand):
         log.info(userinfo.name)  # UX
         log.info(f"Your price plan: {userinfo.plan.name}")  # UX
         log.info(f"Your workgroup: {userinfo.workgroup}")  # UX
+        if userinfo.plan == PricePlan.FREE:
+            log.info(f"Remaining priority queues: {max(0, 20 - userinfo.priority_queues_count)} / 20")  # UX
 
 
 class LogoutCommand(BaseUserCommand):

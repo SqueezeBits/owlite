@@ -9,11 +9,6 @@ from torch.nn.parallel import DataParallel, DistributedDataParallel
 from ...core.logger import log
 from ...enums import ModelStatus
 from ..signature import Signature
-from ..utils import (
-    get_most_common_device,
-    get_most_common_floating_point_type,
-    move_tensors_to,
-)
 from .graph_checker import validate_procedure_calls
 from .optimize import optimize
 
@@ -54,13 +49,6 @@ def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphMo
         raise TypeError(f"Expected torch.nn.Module instance but object of type {given_type} given: {model}")
 
     training_status = model.training
-    # move input args and kwargs to model device
-    device = get_most_common_device(model)
-    dtype = get_most_common_floating_point_type(model)
-    log.debug(f"Tracing with device={device}, dtype={dtype}")
-
-    args = move_tensors_to(args, device, dtype)
-    kwargs = move_tensors_to(kwargs, device, dtype)
 
     original_signature = inspect.signature(model.forward)
     exporter = torch._dynamo.export(model, aten_graph=False, pre_dispatch=False, tracing_mode="real")

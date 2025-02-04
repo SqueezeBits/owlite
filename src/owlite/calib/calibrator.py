@@ -23,11 +23,13 @@ class Calibrator(ABC):
     Attributes:
         hook_handler (`torch.utils.hooks.RemovableHandle`, `optional`): A hook handler.
         quantizer (`FakeQuantizer`): The `FakeQuantizer` to which the calibration will be applied.
+        input_dtype (`torch.dtype`, `optional`): Internal attribute to hold the dtype of the input fed to the quantizer.
     """
 
     def __init__(self, quantizer: "FakeQuantizer"):
         self.hook_handler: RemovableHandle | None = None
         self.quantizer: FakeQuantizer = quantizer
+        self.input_dtype: torch.dtype | None = None
 
     def check_calib_ready(self) -> bool:
         """Check that the conditions for calibration are met.
@@ -65,8 +67,12 @@ class Calibrator(ABC):
                 f"Tensor shape of step_size({self.quantizer.step_size.shape}) is not matched to"
                 f"max_value({max_value.shape})"
             )
+        if self.input_dtype is None:
+            log.warning(f"Quantizer({self.quantizer.id})'s input_dtype is not set. Set it to float32 automatically.")
         if self.quantizer.symmetric:
-            self.quantizer.step_size.data = (max_value / self.quantizer.maxabs_bound).detach().clone()
+            self.quantizer.step_size.data = (
+                (max_value / self.quantizer.maxabs_bound).to(self.input_dtype).detach().clone()
+            )
             return
         if min_value is None:
             raise TypeError("Trying to update the asymmetric quantizer parameters, but no min_value was given.")
@@ -78,7 +84,10 @@ class Calibrator(ABC):
         max_value = torch.where(max_value >= 0, max_value, 0.0).clone()
         min_value = torch.where(min_value <= 0, min_value, 0.0).clone()
         self.quantizer.step_size.data = (
-            ((max_value - min_value) / (self.quantizer.quant_max - self.quantizer.quant_min)).detach().clone()
+            ((max_value - min_value) / (self.quantizer.quant_max - self.quantizer.quant_min))
+            .to(self.input_dtype)
+            .detach()
+            .clone()
         )
         self.quantizer.zero_point.data = (
             (-(min_value / self.quantizer.step_size.data).round() + self.quantizer.quant_min)

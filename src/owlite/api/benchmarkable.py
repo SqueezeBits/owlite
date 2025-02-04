@@ -116,6 +116,7 @@ class Benchmarkable:
         model: GraphModule,
         args: tuple[Any, ...] | None = None,
         kwargs: dict[str, Any] | None = None,
+        *,
         dynamic_axis_options: DynamicAxisOptions | None = None,
         onnx_export_options: ONNXExportOptions | None = None,
     ) -> onnx.ModelProto:
@@ -184,13 +185,6 @@ class Benchmarkable:
         log.info(f"Benchmark initiated for the {self}")  # UX
         self.request_benchmark()
         log.info(f"Benchmark requested on '{self.device}'")  # UX
-        if not self.plan.paid:
-            log.info(
-                "Your account is not eligible for downloading the runtime engine. "
-                f"Please consider upgrading your plan or using the ONNX at {self.onnx_path} to deploy it "
-                "on a runtime of your choice."
-            )  # UX
-            return
 
         self.poll_benchmark(wait_for_the_results=download_engine)
 
@@ -220,12 +214,11 @@ class Benchmarkable:
             },
         )
         assert isinstance(resp, str)
+        self.log_benchmark_priority()
         log.debug(f"request_benchmark received {resp}")
 
     def get_benchmark_queue(self) -> dict:
-        """Get information of an experiment.
-
-        If user's plan is upper than free plan, uploads model weights to device manager.
+        """Get queueing information of an experiment.
 
         Returns:
             dict: Queueing information of an experiment.
@@ -334,7 +327,7 @@ class Benchmarkable:
 
             message = ""
             match benchmark_status:
-                case BenchmarkStatus.PRE_FETCHING:
+                case BenchmarkStatus.PRE_FETCHING | BenchmarkStatus.UPLOADING:
                     queue_position = benchmark_info.get("pos", None)
                     progress_dots = ". " * (iteration_count % 4)
                     message = (
@@ -424,10 +417,7 @@ class Benchmarkable:
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code == 404:
                 log.error(
-                    "Missing the engine to download. " "You may need to retry build the engine using `owl.benchmark`"
-                    if self.plan.paid
-                    else "The free plan doesn't support the engine download. "
-                    "Upgrade to a higher plan to download the engine through OwLite with a seamless experience"
+                    "Missing the engine to download. You may need to retry build the engine using `owl.benchmark`"
                 )  # UX
             raise e
         assert isinstance(resp, dict)
@@ -462,6 +452,27 @@ class Benchmarkable:
             json=self.payload(run_name=self.name, logs=message),
         )
         assert isinstance(resp, str)
+
+    def log_benchmark_priority(self) -> None:
+        """Log benchmark priority information for free plan users.
+
+        Logs information about the remaining benchmark quota for free plan users.
+        For paid plan users, this method returns without doing anything.
+        """
+        if self.plan.paid:
+            return
+        priority_queues_count = whoami().priority_queues_count
+        if priority_queues_count > 20:
+            log.info(
+                "You have used all 20 Priority Queue Benchmarks available for Free Plan users. "
+                "Benchmark will now proceed using the Standard Queue. Usage resets on the 1st of each month."
+            )  # UX
+        else:
+            log.info(
+                "Free Plan users can use up to 20 Priority Queue Benchmarks per month. "
+                "Exceeding this limit may result in a lower priority in the Benchmark queue."
+            )  # UX
+            log.info(f"Remaining quota: {20 - priority_queues_count}/20")  # UX
 
     def payload(self, **kwargs: str | int) -> dict[str, str | int]:
         """Create payload for API requests.

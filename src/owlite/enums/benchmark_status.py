@@ -6,8 +6,9 @@ class BenchmarkStatus(IntEnum):
 
     IDLE = 0
     PRE_FETCHING = 1
-    BENCHMARKING = 2
-    BENCHMARK_DONE = 3
+    UPLOADING = 2
+    BENCHMARKING = 3
+    BENCHMARK_DONE = 4
     FETCHING_ERR = -1
     TIMEOUT_ERR = -2
     BENCHMARK_ERR = -3
@@ -19,6 +20,7 @@ class BenchmarkStatus(IntEnum):
         """Whether the status indicates if the benchmark is in progress."""
         return self in (
             BenchmarkStatus.PRE_FETCHING,
+            BenchmarkStatus.UPLOADING,
             BenchmarkStatus.BENCHMARKING,
         )
 

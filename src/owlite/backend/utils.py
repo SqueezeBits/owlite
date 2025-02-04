@@ -1,9 +1,6 @@
 # ruff: noqa: E741
 import json
-from collections import Counter, OrderedDict
-from collections.abc import Iterable
 from numbers import Number
-from typing import Any
 
 import numpy as np
 import onnx
@@ -13,6 +10,7 @@ from onnx.helper import tensor_dtype_to_np_dtype, tensor_dtype_to_string
 from torch.fx.graph_module import GraphModule
 from torch.fx.node import Node as FXNode
 from torch.fx.node import Target as FXTarget
+from torch.utils._pytree import PyTree, tree_flatten
 
 from ..core.logger import log
 
@@ -31,19 +29,27 @@ ATOL_FP32 = 1.0e-8
 
 
 # pylint: disable-next=missing-function-docstring
-def get_numpy_type(onnx_type: np.dtype | int | None) -> np.dtype | None:
-    if onnx_type is None:
-        return None
+def get_numpy_type(
+    onnx_tensor_or_data_type: onnx.ValueInfoProto | onnx.TensorProto | np.dtype | int | None,
+) -> np.dtype | None:
+    if isinstance(onnx_tensor_or_data_type, np.dtype | None):
+        return onnx_tensor_or_data_type
 
-    if isinstance(onnx_type, np.dtype):
-        # Already a NumPy type
-        return onnx_type
+    if isinstance(onnx_tensor_or_data_type, onnx.ValueInfoProto):
+        data_type = onnx_tensor_or_data_type.type.tensor_type.elem_type
+    elif isinstance(onnx_tensor_or_data_type, onnx.TensorProto):
+        data_type = onnx_tensor_or_data_type.data_type
+    else:
+        data_type = onnx_tensor_or_data_type
 
-    # For some reason, TENSOR_TYPE_TO_NP_TYPE maps `bfloat16` to `float32`.
-    # This obviously breaks things, so we need to treat this as a special case.
-    if onnx_type == onnx.TensorProto.BFLOAT16:
+    try:
+        return tensor_dtype_to_np_dtype(data_type)
+    except KeyError as e:
+        log.warning(
+            f"ONNX data type {onnx.helper.tensor_dtype_to_string(data_type)} "
+            f"cannot be converted to a numpy data type. ({e})"
+        )  # UX
         return None
-    return tensor_dtype_to_np_dtype(onnx_type)
 
 
 # pylint: disable-next=missing-function-docstring
@@ -202,101 +208,20 @@ def camel_to_snake(camel_cased_string: str) -> str:
     return snake_cased_string
 
 
-def get_most_common_device(model: torch.nn.Module) -> torch.device:
-    """Find the most common device where the parameters of the model reside.
-
-    Args:
-        model (torch.nn.Module): a model
-
-    Returns:
-        torch.device: the most common device where the parameters of the model reside.
-    """
-    counter = Counter(p.device for p in model.parameters())
-    if len(counter) == 0:
-        return torch.device("cpu")
-    if len(counter) > 1:
-        log.warning(f"The model parameters reside on more than 1 devices: {set(counter.elements())}")
-    return counter.most_common(1)[0][0]
-
-
-def get_most_common_floating_point_type(model: torch.nn.Module) -> torch.dtype:
-    """Find the most common floating point data type of the parameters of the model.
-
-    Args:
-        model (torch.nn.Module): a model
-
-    Returns:
-        torch.dtype: the most common floating point data type of the parameters of the model
-    """
-    counter = Counter(
-        filter(
-            lambda dtype: torch.is_floating_point(torch.empty(1, dtype=dtype)),
-            (p.dtype for p in model.parameters()),
-        )
-    )
-    if len(counter) == 0:
-        return torch.float32
-    if len(counter) > 1:
-        log.warning(f"The model parameters have more than 1 floating point types: {set(counter.elements())}")
-    return counter.most_common(1)[0][0]
-
-
-def move_tensors_to(
-    args: Any,
-    device: torch.device | None = None,
-    dtype: torch.dtype | None = None,
-) -> Any:
-    """Assign device and dtype to tensors in a nested structure containing torch.Tensor instances.
-
-    Args:
-        args (Any): a nested structure (dict / list / tuple) of torch.Tensor instances.
-        device (torch.device | None, optional): if provided, moves all tensors to the device. Defaults to None.
-        dtype (torch.dtype | None, optional): if the dtype is a floating point type, only floating point typed
-            tensors in args will be casted to dtype. The behavior is similar when dtype is a signed integer type
-            or unsigned integer type. Defaults to None.
-
-    Returns:
-        Any: the nested structure of tensors with possibly modified device and dtype.
-    """
-    if isinstance(args, dict):
-        return {key: move_tensors_to(value, device, dtype) for key, value in args.items()}
-
-    if isinstance(args, tuple):
-        return tuple(move_tensors_to(x, device, dtype) for x in args)
-
-    if isinstance(args, list):
-        return [move_tensors_to(x, device, dtype) for x in args]
-
-    if isinstance(args, torch.Tensor) and dtype is not None:
-        is_args_dtype_integral = not args.dtype.is_floating_point and not args.dtype.is_complex
-        is_dtype_integral = not dtype.is_floating_point and not dtype.is_complex
-        if (is_dtype_integral and is_args_dtype_integral and (args.dtype.is_signed == dtype.is_signed)) or (
-            args.dtype.is_floating_point and dtype.is_floating_point
-        ):
-            args = args.to(dtype)
-
-    if isinstance(args, torch.Tensor) and device is not None:
-        args = args.to(device)
-
-    return args
-
-
-def compare_nested_outputs(
-    x: Any,
-    y: Any,
+def compare_pytrees(
+    x: PyTree,
+    y: PyTree,
+    *,
     rtol: float | None = None,
     atol: float | None = None,
     equal_nan: bool = False,
+    compare_tree_specs: bool = False,
 ) -> bool:
-    """Compare nested structures for approximate equality.
-
-    Checks if two nested structure of values share the same nested structure,
-    and if so, checks if their value pairs are all close.
+    """Compare all the values in given python object trees.
 
     Args:
-        x (Any): a nested structure (dict / list / tuple) of values
-            (one of Number, torch.Tensor or np.ndarray instances).
-        y (Any): another nested structure of values.
+        x (PyTree): a python object tree that whose leaves are one of Number, torch.Tensor or np.ndarray objects.
+        y (PyTree): another such python object tree.
         rtol (float | None, optional): See the `rtol` parameter in
             https://numpy.org/doc/stable/reference/generated/numpy.allclose.html. Defaults to RTOL_FP16 if the number
             of bits of both x and y are less then 32, RTOL_FP32 otherwise.
@@ -304,69 +229,27 @@ def compare_nested_outputs(
             https://numpy.org/doc/stable/reference/generated/numpy.allclose.html. Defaults to ATOL_FP16 if the number
             of bits of both x and y are less then 32, ATOL_FP32 otherwise.
         equal_nan (bool, optional): Whether to compare NaN's as equal. If True, NaN's in a will be considered equal to
-            NaN's in b in the output array.. Defaults to False.
+            NaN's in b in the output array. Defaults to False.
+        compare_tree_specs (bool, optional): Whether to compare the spec of the given object trees. Defaults to False.
 
     Returns:
-        bool: True if x and y shares the same nested structure and their tensors are all close, False otherwise.
+        bool: True if all values in x and y are approximately equal, False otherwise.
     """
-
-    def _as_key_value(x: tuple | list | dict | OrderedDict) -> Iterable[tuple[Any, Any]]:
-        return enumerate(x) if isinstance(x, tuple | list) else x.items()
-
-    def _as_path(key: Any) -> str:
-        if isinstance(key, str):
-            return f'["{key}"]'
-        return f"[{key}]"
-
-    def _compare_key_value(l: tuple, r: tuple, path: str) -> bool:
-        if l[0] != r[0]:
-            log.warning(f"An output name has been changed: {r[0]} -> {l[0]}")
-            return False
-        return _compare(l[1], r[1], path=path + _as_path(l[0]))
-
-    def _compare(lhs: Any, rhs: Any, path: str = "") -> bool:
-        if lhs is None and rhs is None:
-            return True
-
-        if not (lhs.__class__ is rhs.__class__ or isinstance(lhs, rhs.__class__)):
-            log.warning(f"Output{path} have different types: {lhs.__class__.__name__}  != {rhs.__class__.__name__}")
-            return False
-
-        if isinstance(lhs, tuple | list | dict | OrderedDict):
-            if len(lhs) != len(rhs):
-                log.warning(f"The length of output{path} has been changed: {len(rhs)} -> {len(lhs)}")
-                return False
-            return all(_compare_key_value(l, r, path) for l, r in zip(_as_key_value(lhs), _as_key_value(rhs)))
-
-        if not isinstance(lhs, torch.Tensor | np.ndarray | Number):
-            log.warning(
-                "Expected nested list/tuple/dict/OrderedDict of torch.Tensor/np.ndarray/Number/None objects, "
-                f"but found unsupported type {type(lhs)} while parsing nested structure."
-            )
-            return False
-
-        if isinstance(lhs, torch.Tensor | np.ndarray) and lhs.shape != rhs.shape:
-            log.warning(f"Output{path} have different shapes: {typestr(lhs)} != {typestr(rhs)}")
-            return False
-
-        are_allclose = allclose(lhs, rhs, rtol=rtol, atol=atol, equal_nan=equal_nan)
-        if not are_allclose:
-            lhs, rhs = map(convert_to_fp_ndarray, (lhs, rhs))
-            diff = lhs - rhs
-            squared_diff = diff**2
-            mse = squared_diff.mean().item()
-            max_diff = np.abs(diff).max().item()
-            log.warning(
-                f"Output{path} of shape {typestr(lhs)} have different values: MSE={mse:3e}, MaxDiff={max_diff:3e}"
-            )
-        return are_allclose
-
-    return _compare(x, y)
+    flat_x, spec_x = tree_flatten(x)
+    flat_y, spec_y = tree_flatten(y)
+    have_same_specs = spec_x == spec_y
+    if not have_same_specs:
+        log.warning(f"Comparing objects with different pytree specs:\n{spec_x}\n{spec_y}")
+    are_comparable = have_same_specs if compare_tree_specs else len(flat_x) == len(flat_y)
+    return are_comparable and all(
+        allclose(item_x, item_y, rtol=rtol, atol=atol, equal_nan=equal_nan) for item_x, item_y in zip(flat_x, flat_y)
+    )
 
 
 def allclose(
     a: Number | np.ndarray | torch.Tensor,
     b: Number | np.ndarray | torch.Tensor,
+    *,
     rtol: float | None = None,
     atol: float | None = None,
     equal_nan: bool = False,
@@ -431,7 +314,7 @@ def convert_to_fp_ndarray(x: Number | np.ndarray | torch.Tensor) -> np.ndarray:
     elif isinstance(x, Number):
         x = np.array(x)
 
-    if not is_floating_point(x.dtype):  # type: ignore
-        x = x.astype(np.float32)  # type: ignore
+    if not is_floating_point(x.dtype):
+        x = x.astype(np.float32)
 
-    return x  # type: ignore
+    return x

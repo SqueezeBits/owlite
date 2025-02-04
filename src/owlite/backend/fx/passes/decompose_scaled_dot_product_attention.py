@@ -89,6 +89,9 @@ class DecomposeScaledDotProductAttention(RewritePass):
                 sqrt_embed_dim = graph.call_function(math.sqrt, (embed_dim,))
                 scale_factor = graph.call_function(operator.truediv, (1, sqrt_embed_dim))
 
+            # Scale q, k before matmul for stability
+            scale_factor = graph.call_function(math.sqrt, (scale_factor,))
+            query = graph.call_function(operator.mul, (query, scale_factor))
             attn_bias: Node | None = None
 
             def initialize_attn_bias() -> Node:
@@ -119,8 +122,8 @@ class DecomposeScaledDotProductAttention(RewritePass):
                 attn_bias = graph.call_function(operator.add, (attn_bias, attn_mask))
 
             key_transpose = graph.call_method("transpose", (key, -2, -1))
+            key_transpose = graph.call_function(operator.mul, (key_transpose, scale_factor))
             attn_weight = graph.call_function(operator.matmul, (query, key_transpose))
-            attn_weight = graph.call_function(operator.mul, (attn_weight, scale_factor))
             # Do not add `attn_bias` when it is zero
             if attn_bias is not None:
                 attn_weight = graph.call_function(operator.add, (attn_weight, attn_bias))

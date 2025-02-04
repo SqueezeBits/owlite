@@ -85,6 +85,12 @@ class Project:
                 project = cls(data["detail"], name)
                 log.info(f"Loaded the existing {project}")  # UX
                 return project
+
+            if e.response is not None and e.response.status_code == 403:
+                log.error(
+                    "Free Plan users can create up to two Projects. In this execution, OwLite functions "
+                    "will not be executed. Please delete an existing Project or register it in an existing one."
+                )  # UX
             raise e
 
     def __str__(self) -> str:

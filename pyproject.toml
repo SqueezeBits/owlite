@@ -9,7 +9,7 @@ description = "OwLite - No-Code AI compression Toolkit"
 dependencies = [
   "onnx>=1.15, <1.17",
   "torch>=2.1.2,<2.5",
-  "onnxruntime>=1.17, <1.19",
+  "onnxruntime>=1.17, <1.21",
   "colored",
   "yacs",
   "tabulate",

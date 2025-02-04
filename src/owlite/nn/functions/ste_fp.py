@@ -21,7 +21,7 @@ class FakeFPQuantizeSTEFunction(BaseFakeFPQuantizeFunction):
     $$
     """
 
-    @staticmethod  # pylint: disable-next=arguments-differ
+    @staticmethod  # pylint: disable-next=arguments-differ, too-many-positional-arguments
     def forward(
         ctx: Any,
         inputs: Tensor,
@@ -36,7 +36,7 @@ class FakeFPQuantizeSTEFunction(BaseFakeFPQuantizeFunction):
         lower_bound = quant_min * step_size
         upper_bound = quant_max * step_size
         ctx.other = lower_bound, upper_bound
-        return fake_fp8_quantize(inputs, step_size, zero_point, quant_min, quant_max, axis)
+        return fake_fp8_quantize(inputs, step_size, zero_point, quant_min=quant_min, quant_max=quant_max, axis=axis)
 
     @staticmethod
     def backward(ctx: Any, *grad_outputs: Any) -> Any:

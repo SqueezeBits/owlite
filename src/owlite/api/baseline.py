@@ -62,11 +62,20 @@ class Baseline(Benchmarkable):
             "owlite_version": str(OWLITE_VERSION),
             "torch_version": str(torch.__version__),
         }
+        try:
+            resp = MAIN_API_BASE.post(
+                "/projects/baselines",
+                json=Baseline(name=name, project=project, device=device).payload(**extra_payload),
+            )
 
-        resp = MAIN_API_BASE.post(
-            "/projects/baselines",
-            json=Baseline(name=name, project=project, device=device).payload(**extra_payload),
-        )
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 403:
+                log.error(
+                    "Free Plan users can create up to 20 Experiments. "
+                    "If this limit is exceeded, registering a new Baseline will be restricted. "
+                    "To register a new Baseline, please delete an existing Experiment."
+                )  # UX
+            raise e
         assert isinstance(resp, dict)
         name_from_resp = resp["baseline_name"]
         if name_from_resp != name:
