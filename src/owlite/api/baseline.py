@@ -15,8 +15,10 @@ from ..backend.fx import serialize
 from ..backend.signature import Signature
 from ..core.api_base import DOVE_API_BASE, MAIN_API_BASE
 from ..core.cache.device import Device
+from ..core.cache.workspace import Workspace
 from ..core.constants import OWLITE_VERSION
 from ..core.logger import log
+from ..enums import PricePlan
 from .benchmarkable import Benchmarkable
 from .project import Project
 
@@ -31,6 +33,16 @@ class Baseline(Benchmarkable):
     project: Project
     experiments: dict[str, "Experiment"] = field(default_factory=dict)
     input_signature: Signature | None = field(default=None)
+
+    @property
+    def plan(self) -> PricePlan:
+        """The price plan for this baseline."""
+        return self.workspace.plan
+
+    @property
+    def workspace(self) -> Workspace:
+        """The parent workspace for this experiment."""
+        return self.project.workspace
 
     @property
     def home(self) -> str:
@@ -71,7 +83,7 @@ class Baseline(Benchmarkable):
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 403:
                 log.error(
-                    "Free Plan users can create up to 20 Experiments. "
+                    "You can create up to 20 experiments in a single Free Plan Workspace. "
                     "If this limit is exceeded, registering a new Baseline will be restricted. "
                     "To register a new Baseline, please delete an existing Experiment."
                 )  # UX
@@ -169,6 +181,7 @@ class Baseline(Benchmarkable):
 
     def payload(self, **kwargs: str | int) -> dict[str, str | int]:
         p: dict[str, str | int] = {
+            "workspace_id": self.workspace.id,
             "project_id": self.project.id,
             "baseline_name": self.name,
         }

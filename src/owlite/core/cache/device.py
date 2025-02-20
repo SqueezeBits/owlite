@@ -39,9 +39,13 @@ class DeviceManager(BaseModel):
             log.error("Using OwLite default device manager needs login. Please login using 'owlite login'")  # UX
             raise LoginError("Not authenticated")
 
+        if (workspace := OWLITE_SETTINGS.current_workspace) is None:
+            log.error("No workspace selected. Please select a workspace")  # UX
+            raise RuntimeError("No workspace selected")
+
         device_api_base = APIBase(self.url, "DEVICE_MANAGER_API")
         try:
-            resp = device_api_base.get("/devices")
+            resp = device_api_base.get("/devices", params={"workspace_id": workspace.id})
         except requests.ConnectionError as err:
             log.error(
                 f"Failed to establish a connection. Please check if the device manager url '{self.url}' is correct"

@@ -725,6 +725,7 @@ def init(
     project: str,
     baseline: str,
     experiment: str | None = None,
+    *,
     duplicate_from: str | None = None,
     description: str | None = None,
     device: str | None = None,
@@ -977,7 +978,11 @@ def init(
         )  # UX
         raise ValueError("Invalid experiment name")
 
-    proj: Project = Project.load_or_create(project, description=description)
+    if (workspace := OWLITE_SETTINGS.current_workspace) is None:
+        log.error("No workspace selected.")  # UX
+        raise RuntimeError("Current workspace not found")
+
+    proj: Project = Project.load_or_create(workspace, project, description=description)
 
     target: Baseline | Experiment
     if OWLITE_DEVICE_SETTINGS.connected is None:

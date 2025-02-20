@@ -2,6 +2,8 @@ from .cache import OWLITE_CACHE_PATH
 from .cache.base_urls import BaseURLs
 from .cache.text import read_text, write_text
 from .cache.tokens import Tokens
+from .cache.workspace import Workspace
+from .logger import log
 
 
 class OwLiteSettings:
@@ -22,6 +24,7 @@ class OwLiteSettings:
         """
         self.tokens_cache = OWLITE_CACHE_PATH / "tokens"
         self.urls_cache = OWLITE_CACHE_PATH / "urls"
+        self.current_workspace_cache = OWLITE_CACHE_PATH / "current_workspace"
 
     @property
     def tokens(self) -> Tokens | None:
@@ -46,6 +49,7 @@ class OwLiteSettings:
         """
         if new_tokens:
             write_text(self.tokens_cache, new_tokens.model_dump_json())
+            log.debug(f"Saved access token='{new_tokens.access_token}' refresh token='{new_tokens.refresh_token}'")
         else:
             self.tokens_cache.unlink(missing_ok=True)
 
@@ -75,6 +79,31 @@ class OwLiteSettings:
             ValueError: If the provided 'base_urls' instance is invalid or incomplete.
         """
         write_text(self.urls_cache, base_urls.model_dump_json())
+
+    @property
+    def current_workspace(self) -> Workspace | None:
+        """Retrieve current workspace.
+
+        Returns:
+            Workspace | None: The workspace, or None if it doesn't exist.
+        """
+        current_workspace = read_text(self.current_workspace_cache)
+        if not current_workspace:
+            return None
+        return Workspace.model_validate_json(current_workspace)
+
+    @current_workspace.setter
+    def current_workspace(self, new_workspace: Workspace | None) -> None:
+        """Set or remove current workspace.
+
+        Args:
+            new_workspace (Workspace | None): The workspace to set or None to remove the current workspace.
+        """
+        if new_workspace:
+            write_text(self.current_workspace_cache, new_workspace.model_dump_json())
+            log.debug(f"Saved current workspace: {new_workspace}")
+        else:
+            self.current_workspace_cache.unlink(missing_ok=True)
 
 
 OWLITE_SETTINGS = OwLiteSettings()

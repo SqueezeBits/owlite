@@ -3,8 +3,8 @@
 # pylint: disable=unnecessary-lambda, too-few-public-methods
 from argparse import Namespace, _SubParsersAction
 
-from ....enums.price_plan import PricePlan
 from ...logger import log
+from ...settings import OWLITE_SETTINGS
 from .. import BaseOwLiteCLICommand
 from ..api.login import whoami
 from ..login import login, logout
@@ -46,6 +46,9 @@ class LoginCommand(BaseUserCommand):
     def run(self) -> None:
         """Execute the login operation."""
         login()
+        if OWLITE_SETTINGS.current_workspace is not None:
+            log.info(f"Your Current Workspace: {OWLITE_SETTINGS.current_workspace.name}")  # UX
+            log.info("The OwLite Package operates within the selected workspace.")  # UX
 
 
 class WhoamiCommand(BaseUserCommand):
@@ -55,10 +58,9 @@ class WhoamiCommand(BaseUserCommand):
         """Execute the whoami operation and prints the username."""
         userinfo = whoami()
         log.info(userinfo.name)  # UX
-        log.info(f"Your price plan: {userinfo.plan.name}")  # UX
-        log.info(f"Your workgroup: {userinfo.workgroup}")  # UX
-        if userinfo.plan == PricePlan.FREE:
-            log.info(f"Remaining priority queues: {max(0, 20 - userinfo.priority_queues_count)} / 20")  # UX
+        if OWLITE_SETTINGS.current_workspace is not None:
+            log.info(f"Your Current Workspace: {OWLITE_SETTINGS.current_workspace.name}")  # UX
+            log.info("The OwLite Package operates within the selected workspace.")  # UX
 
 
 class LogoutCommand(BaseUserCommand):

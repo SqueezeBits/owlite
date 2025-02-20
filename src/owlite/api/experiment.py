@@ -11,8 +11,10 @@ from typing_extensions import Self
 from ..backend.signature import Signature
 from ..core.api_base import DOVE_API_BASE, MAIN_API_BASE
 from ..core.cache.device import Device
+from ..core.cache.workspace import Workspace
 from ..core.constants import FX_CONFIGURATION_FORMAT_VERSION, OWLITE_VERSION
 from ..core.logger import log
+from ..enums import PricePlan
 from ..options import CompressionOptions
 from .baseline import Baseline
 from .benchmarkable import Benchmarkable
@@ -27,6 +29,16 @@ class Experiment(Benchmarkable):
     baseline: Baseline
     has_config: bool
     input_signature: Signature | None = field(default=None)
+
+    @property
+    def workspace(self) -> Workspace:
+        """The parent workspace for this experiment."""
+        return self.baseline.project.workspace
+
+    @property
+    def plan(self) -> PricePlan:
+        """The price plan for this experiment."""
+        return self.workspace.plan
 
     @property
     def project(self) -> Project:
@@ -94,7 +106,7 @@ class Experiment(Benchmarkable):
                     )  # UX
             elif e.response is not None and e.response.status_code == 403:
                 log.error(
-                    "Free Plan users can create up to 20 Experiments. In this execution, "
+                    "You can create up to 20 experiments in a single Free Plan Workspace. In this execution, "
                     "OwLite functions will not be executed. Please delete any unused Experiment and try again."
                 )  # UX
             raise e
@@ -182,7 +194,7 @@ class Experiment(Benchmarkable):
                 raise RuntimeError("Compression configuration not found") from e
             if e.response is not None and e.response.status_code == 403:
                 log.error(
-                    "Free Plan users can create up to 20 Experiments. In this execution, "
+                    "You can create up to 20 experiments in a single Free Plan Workspace. In this execution, "
                     "OwLite functions will not be executed. Please delete any unused Experiment and try again."
                 )  # UX
             raise e
@@ -224,6 +236,7 @@ class Experiment(Benchmarkable):
 
     def payload(self, **kwargs: str | int) -> dict[str, str | int]:
         p: dict[str, str | int] = {
+            "workspace_id": self.workspace.id,
             "project_id": self.project.id,
             "baseline_name": self.baseline.name,
             "run_name": self.name,

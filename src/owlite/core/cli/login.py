@@ -7,6 +7,7 @@ import re
 from getpass import getpass
 
 from ..cache.tokens import Tokens
+from ..cache.workspace import Workspace
 from ..logger import log
 from ..settings import OWLITE_SETTINGS
 from .api.login import login as _login
@@ -68,8 +69,9 @@ def login() -> None:
 
     userinfo = whoami()
     log.info(f"Logged in as {userinfo.name}")  # UX
-    log.info(f"Your price plan: {userinfo.plan.name}")  # UX
-    log.info(f"Your workgroup: {userinfo.workgroup}")  # UX
+
+    OWLITE_SETTINGS.current_workspace = Workspace.load(userinfo.default_workspace_id)
+
     log.info(f"Your authentication token is saved at {OWLITE_SETTINGS.tokens_cache}")  # UX
     log.debug(f"Saved tokens: \n\t\taccess token= '{tokens.access_token}'\n\t\trefresh token= '{tokens.refresh_token}'")
 
@@ -77,4 +79,5 @@ def login() -> None:
 def logout() -> None:
     """Logout from OwLite, tokens are deleted from the machine."""
     OWLITE_SETTINGS.tokens = None
+    OWLITE_SETTINGS.current_workspace = None
     log.info("Successfully logged out")  # UX

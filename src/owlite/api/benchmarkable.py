@@ -17,6 +17,7 @@ from ..backend.onnx.export import export
 from ..backend.signature import Signature
 from ..core.api_base import MAIN_API_BASE, APIBase
 from ..core.cache.device import Device
+from ..core.cache.workspace import Workspace
 from ..core.cli.api.login import whoami
 from ..core.constants import OWLITE_API_DEFAULT_TIMEOUT, OWLITE_REPORT_URL, OWLITE_VERSION
 from ..core.device_settings import OWLITE_DEVICE_SETTINGS
@@ -50,11 +51,15 @@ class Benchmarkable:
     name: str
     device: Device
 
+    @property
+    def workspace(self) -> Workspace:
+        """The workspace of the current project."""
+        raise NotImplementedError()
+
     @cached_property
     def plan(self) -> PricePlan:
         """Pricing plan of current user."""
-        userinfo = whoami()
-        return PricePlan(userinfo.plan)
+        raise NotImplementedError()
 
     @property
     def input_signature(self) -> Signature | None:
@@ -206,13 +211,7 @@ class Benchmarkable:
             ValueError: When device is not set.
             HTTPError: When request was not successful.
         """
-        resp = DEVICE_API_BASE.post(
-            "/devices/jobs/assign",
-            json={
-                "device_name": self.device.name,
-                "benchmark_key": self.benchmark_key,
-            },
-        )
+        resp = DEVICE_API_BASE.post("/devices/jobs/assign", json=self.benchmark_payload())
         assert isinstance(resp, str)
         self.log_benchmark_priority()
         log.debug(f"request_benchmark received {resp}")
@@ -226,13 +225,7 @@ class Benchmarkable:
         Raises:
             HTTPError: When request was not successful.
         """
-        res = DEVICE_API_BASE.post(
-            "/devices/jobs/queue",
-            json={
-                "device_name": self.device.name,
-                "benchmark_key": self.benchmark_key,
-            },
-        )
+        res = DEVICE_API_BASE.post("/devices/jobs/queue", json=self.benchmark_payload())
         assert isinstance(res, dict)
         log.debug(f"get_benchmark_queue received {res}")
 
@@ -264,10 +257,7 @@ class Benchmarkable:
         """
         res = DEVICE_API_BASE.post(
             "/devices/jobs/abort",
-            json={
-                "device_name": self.device.name,
-                "benchmark_key": self.benchmark_key,
-            },
+            json=self.benchmark_payload(),
         )
         assert isinstance(res, str)
         log.debug(f"abort_benchmark received {res}")
@@ -407,13 +397,7 @@ class Benchmarkable:
             HTTPError: When request was not successful.
         """
         try:
-            resp = DEVICE_API_BASE.post(
-                "/devices/trt",
-                json={
-                    "device_name": self.device.name,
-                    "benchmark_key": self.benchmark_key,
-                },
-            )
+            resp = DEVICE_API_BASE.post("/devices/trt", json=self.benchmark_payload())
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code == 404:
                 log.error(
@@ -427,13 +411,7 @@ class Benchmarkable:
     def clear_engine(self) -> None:
         """Clear created the engine on device."""
         log.debug(f"Clear the engine on device: {self.device}, benchmark_key: {self.benchmark_key}")
-        resp = DEVICE_API_BASE.post(
-            "/devices/clear",
-            json={
-                "device_name": self.device.name,
-                "benchmark_key": self.benchmark_key,
-            },
-        )
+        resp = DEVICE_API_BASE.post("/devices/clear", json=self.benchmark_payload())
         assert isinstance(resp, str)
         if len(resp) > 0:
             log.debug(f"Clear the engine with url: {resp}")
@@ -447,10 +425,7 @@ class Benchmarkable:
         Raises:
             HTTPError: When request was not successful.
         """
-        resp = MAIN_API_BASE.post(
-            "/projects/runs/update",
-            json=self.payload(run_name=self.name, logs=message),
-        )
+        resp = MAIN_API_BASE.post("/projects/runs/update", json=self.payload(run_name=self.name, logs=message))
         assert isinstance(resp, str)
 
     def log_benchmark_priority(self) -> None:
@@ -464,23 +439,29 @@ class Benchmarkable:
         priority_queues_count = whoami().priority_queues_count
         if priority_queues_count > 20:
             log.info(
-                "You have used all 20 Priority Queue Benchmarks available for Free Plan users. "
+                "You have used all 20 Priority Queue Benchmarks available for all Free Plan workspaces. "
                 "Benchmark will now proceed using the Standard Queue. Usage resets on the 1st of each month."
             )  # UX
         else:
             log.info(
-                "Free Plan users can use up to 20 Priority Queue Benchmarks per month. "
-                "Exceeding this limit may result in a lower priority in the Benchmark queue."
+                "In Free Plan Workspaces, requested benchmarks are processed through the priority queue, "
+                "up to 20 per month. Exceeding this limit may result in a lower priority in the Benchmark queue."
             )  # UX
             log.info(f"Remaining quota: {20 - priority_queues_count}/20")  # UX
 
     def payload(self, **kwargs: str | int) -> dict[str, str | int]:
-        """Create payload for API requests.
-
-        Raises:
-            NotImplementedError: If not implemented by subclasses.
-        """
+        """Create payload for API requests."""
         raise NotImplementedError()
+
+    def benchmark_payload(self, **kwargs: str | int) -> dict[str, str | int]:
+        """Create benchmark payload for API requests."""
+        p: dict[str, str | int] = {
+            "workspace_id": self.workspace.id,
+            "device_name": self.device.name,
+            "benchmark_key": self.benchmark_key,
+        }
+        p.update(kwargs)
+        return p
 
     def __str__(self) -> str:
         raise NotImplementedError()

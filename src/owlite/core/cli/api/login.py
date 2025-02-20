@@ -3,8 +3,8 @@
 import requests
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from ....enums.price_plan import PricePlan
 from ...api_base import APIBase
+from ...cache.workspace import Workspace
 from ...constants import OWLITE_API_DEFAULT_TIMEOUT
 from ...exceptions import LoginError
 from ...logger import log
@@ -16,8 +16,7 @@ class UserInfo(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
     name: str = Field(validation_alias=AliasChoices("name", "username"))
-    plan: PricePlan = Field(validation_alias=AliasChoices("plan", "tier"))
-    workgroup: str = Field(validation_alias=AliasChoices("workgroup", "workgroup_name"))
+    default_workspace_id: str = Field(validation_alias=AliasChoices("workspace", "default_workspace_id"))
     priority_queues_count: int = Field(
         validation_alias=AliasChoices("priority_queues_count", "monthly_benchmark_count")
     )
@@ -86,7 +85,13 @@ def whoami() -> UserInfo:
     assert isinstance(resp, dict)
     log.debug(f"whoami response: {resp}")
     user_info = UserInfo.model_validate(resp)
-    log.debug(
-        f"user info: {user_info.name}, {user_info.plan}, {user_info.workgroup}, {user_info.priority_queues_count}"
-    )
+    log.debug(f"user info : {user_info}")
+
+    if (workspace := OWLITE_SETTINGS.current_workspace) is None:
+        workspace_id = user_info.default_workspace_id
+        log.warning("No workspace selected. Automatically selecting the default one")  # UX
+    else:
+        workspace_id = workspace.id
+    OWLITE_SETTINGS.current_workspace = Workspace.load(workspace_id)
+
     return user_info
