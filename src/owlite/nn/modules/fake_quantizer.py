@@ -274,6 +274,7 @@ class FakeQuantizer(torch.nn.Module, ABC):
         state.update(extra_state)
         return state
 
+    # pylint: disable-next=too-many-positional-arguments
     def _load_from_state_dict(
         self,
         state_dict: dict,
@@ -311,21 +312,23 @@ class FakeQuantizer(torch.nn.Module, ABC):
             error_msgs,
         )
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+    def forward(self, data: Any) -> torch.Tensor:
         """Apply fake quantization to the input tensor.
 
         Args:
-            inputs (torch.Tensor): A tensor to fake-quantize.
+            data (Any): Initial data for the tensor. Can be a list, tuple, NumPy ndarray, scalar, and other types.
 
         Returns:
-            torch.Tensor: the fake-quantized tensor if this fake quantizer is enabled, the unchanged input tensor
-                otherwise.
+            torch.Tensor: the fake-quantized tensor if this fake quantizer is enabled, the unchanged input otherwise.
         """
+        if not isinstance(data, torch.Tensor):
+            data = torch.tensor(data, dtype=torch.float32)
+
         if not self.is_enabled:
-            return inputs
+            return data
 
         return self.qat_function(
-            inputs,
+            data,
             self.step_size.data,
             self.zero_point.data,
             self.grad_scale,
@@ -404,14 +407,14 @@ class FakeINTQuantizer(FakeQuantizer):
                 f"({value}, {self.symmetric}, {self.unsigned})"
             )
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Apply fake quantization to the input tensor.
+    def forward(self, data: Any) -> torch.Tensor:
+        """Apply fake integer quantization to the input.
 
         Args:
-            inputs (torch.Tensor): A tensor to fake-quantize.
+            data (Any): Initial data for the tensor. Can be a list, tuple, NumPy ndarray, scalar, and other types.
 
         Raises:
-            ValueError: If the fake quantizer has a negative step size or its channel size mismatches with the `inputs`.
+            ValueError: If the fake quantizer has a negative step size or its channel size mismatches with the `data`.
 
         Returns:
             torch.Tensor: the fake-quantized tensor if this fake quantizer is enabled,
@@ -428,7 +431,7 @@ class FakeINTQuantizer(FakeQuantizer):
             )
             raise ValueError("Step_size must be positive")
 
-        return super().forward(inputs)
+        return super().forward(data)
 
 
 class FakePerChannelINTQuantizer(FakeINTQuantizer, PerChannelMixin):
@@ -447,17 +450,20 @@ class FakePerChannelINTQuantizer(FakeINTQuantizer, PerChannelMixin):
         super().__init__(options, enable=enable, narrow_range=narrow_range, identification=identification)
         self.init_quantization_param(channel=channel)
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+    def forward(self, data: Any) -> torch.Tensor:
+        if not isinstance(data, torch.Tensor):
+            data = torch.tensor(data, dtype=torch.float32)
+
         if self.is_enabled and not (
-            self.channel.axis < inputs.ndim and self.channel.size == inputs.shape[self.channel.axis]
+            self.channel.axis < data.ndim and self.channel.size == data.shape[self.channel.axis]
         ):
             raise RuntimeError(
                 "FakeQuantizer channel size mismatched:\n"
                 f"id: {self.id}\n"
-                f"inputs.shape: {inputs.shape}\n"
+                f"data.shape: {data.shape}\n"
                 f"channel: {self.channel}"
             )
-        return super().forward(inputs)
+        return super().forward(data)
 
     def as_per_tensor(self) -> "FakePerTensorINTQuantizer":
         """Create a new fake per-tensor quantizer with the same option (except for the `per_channel` value).
@@ -551,11 +557,11 @@ class FakeFPQuantizer(FakeQuantizer):
         """
         return False
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Apply fake quantization to the input tensor.
+    def forward(self, data: Any) -> torch.Tensor:
+        """Apply fake FP quantization to the input.
 
         Args:
-            inputs (torch.Tensor): A tensor to fake-quantize.
+           data (Any): Initial data for the tensor. Can be a list, tuple, NumPy ndarray, scalar, and other types.
 
         Raises:
             ValueError: If the fake quantizer has a negative step size.
@@ -574,7 +580,7 @@ class FakeFPQuantizer(FakeQuantizer):
             )
             raise ValueError("Step_size must be positive")
 
-        return super().forward(inputs)
+        return super().forward(data)
 
 
 class FakePerChannelFPQuantizer(FakeFPQuantizer, PerChannelMixin):
@@ -592,17 +598,20 @@ class FakePerChannelFPQuantizer(FakeFPQuantizer, PerChannelMixin):
         super().__init__(options, enable=enable, identification=identification)
         self.init_quantization_param(channel=channel, zero_point_dtype=torch.float32)
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+    def forward(self, data: Any) -> torch.Tensor:
+        if not isinstance(data, torch.Tensor):
+            data = torch.tensor(data, dtype=torch.float32)
+
         if self.is_enabled and not (
-            self.channel.axis < inputs.ndim and self.channel.size == inputs.shape[self.channel.axis]
+            self.channel.axis < data.ndim and self.channel.size == data.shape[self.channel.axis]
         ):
             raise RuntimeError(
                 "FakeQuantizer channel size mismatched:\n"
                 f"id: {self.id}\n"
-                f"inputs.shape: {inputs.shape}\n"
+                f"data.shape: {data.shape}\n"
                 f"channel: {self.channel}"
             )
-        return super().forward(inputs)
+        return super().forward(data)
 
     def as_per_tensor(self) -> "FakePerTensorFPQuantizer":
         """Create a new fake per-tensor fp quantizer with the same option (except for the `per_channel` value).

@@ -47,7 +47,10 @@ def rescale_step_size_with_batchnorm(
             f"with `running_var` but got {batchnorm} (running_var={batchnorm.running_var})"
         )
         return None
-    scale = batchnorm.weight.data * torch.rsqrt(batchnorm.running_var.data + batchnorm.eps)
+
+    scale = torch.rsqrt(batchnorm.running_var.data + batchnorm.eps)
+    if batchnorm.weight is not None:
+        scale = batchnorm.weight.data * scale
 
     if isinstance(quantizer, PerTensorMixin):
         log.warning(

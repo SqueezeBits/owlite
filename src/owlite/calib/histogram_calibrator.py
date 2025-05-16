@@ -42,9 +42,7 @@ class HistogramCalibrator(Calibrator, ABC):
                 log.error(f"`histogram`: {calibrator.histograms}\n`bin_edge`: {calibrator.bin_edges}")
                 raise ValueError("During calibration, calibration attributions are not initialized")
 
-            _input: torch.Tensor = inputs[0].clone()
-            calibrator.input_dtype = _input.dtype
-            _input = _input.float()
+            _input: torch.Tensor = self.convert_to_tensor(inputs)
 
             if module.symmetric and module.unsigned and inputs[0].min() < 0:
                 log.warning(

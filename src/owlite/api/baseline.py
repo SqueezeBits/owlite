@@ -54,8 +54,12 @@ class Baseline(Benchmarkable):
 
     @property
     def url(self) -> str:
-        # TODO (huijong): make this url point to the insight page of the baseline.
         return self.project.url
+
+    @property
+    def skipped_optimizers(self) -> list[str] | None:
+        """The list of optimizers to be skipped."""
+        return ["TransposeOptimizer"]
 
     @classmethod
     def create(cls, project: Project, name: str, device: Device) -> Self:
@@ -153,7 +157,7 @@ class Baseline(Benchmarkable):
             name=name,
             project=project,
             input_signature=input_signature,
-            device=Device(manager=device.manager, **resp),
+            device=device,
         )
 
         project.baseline = baseline

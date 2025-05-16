@@ -25,6 +25,7 @@ class OwLiteSettings:
         self.tokens_cache = OWLITE_CACHE_PATH / "tokens"
         self.urls_cache = OWLITE_CACHE_PATH / "urls"
         self.current_workspace_cache = OWLITE_CACHE_PATH / "current_workspace"
+        self.connected_cache = OWLITE_CACHE_PATH / "connected"
 
     @property
     def tokens(self) -> Tokens | None:

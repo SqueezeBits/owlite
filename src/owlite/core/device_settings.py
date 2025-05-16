@@ -1,8 +1,14 @@
-import json
+from functools import cached_property
+from typing import get_args
 
+from ..enums.runtime import Runtime
+from .api_base import NEST_API_BASE
 from .cache import OWLITE_CACHE_PATH
-from .cache.device import Device, DeviceManager
+from .cache.device import Device
 from .cache.text import read_text, write_text
+from .constants import SUPPORTED_QUALCOMM_DEVICES
+from .exceptions import DeviceError, LoginError
+from .logger import log
 from .settings import OWLITE_SETTINGS
 
 
@@ -14,69 +20,16 @@ class OwLiteDeviceSettings:
     to set and retrieve connected devices.
 
     Attributes:
-        devices_cache (Path): Path to store device manager information.
         connected_cache (Path): Path to store information about the connected device.
     """
 
     def __init__(self) -> None:
         """Initialize OwLite device settings.
 
-        Initialize paths for OwLite cache directory to store device manager information
-        and information about the connected device.
+        Initialize paths for OwLite cache directory to store information about
+        the connected device.
         """
-        self.devices_cache = OWLITE_CACHE_PATH / "devices"
         self.connected_cache = OWLITE_CACHE_PATH / "connected"
-
-    @property
-    def managers(self) -> dict[str, "DeviceManager"]:
-        """Retrieve the device manager dictionary.
-
-        Returns:
-            dict[str, DeviceManager]: Device manager dictionary
-        """
-        default_manager = DeviceManager(name="NEST", url=OWLITE_SETTINGS.base_url.NEST)
-        registered_managers = {"NEST": default_manager}
-
-        cache_content = read_text(self.devices_cache)
-        if cache_content is None:
-            return registered_managers
-
-        cached_managers: dict[str, DeviceManager] = {
-            key: DeviceManager.model_validate_json(val) for key, val in json.loads(cache_content).items()
-        }
-        assert cached_managers
-        registered_managers.update(cached_managers)
-        return registered_managers
-
-    @managers.setter
-    def managers(self, managers: dict[str, "DeviceManager"]) -> None:
-        managers.pop("NEST")
-        device_dict_json = json.dumps(managers, default=lambda o: o.model_dump_json())
-        write_text(self.devices_cache, device_dict_json)
-
-    def add_manager(self, manager: "DeviceManager") -> None:
-        """Add a new device to the cache.
-
-        Args:
-            manager (DeviceManager): a new manager
-        """
-        managers = self.managers
-        managers[manager.name] = manager
-        self.managers = managers
-
-    def remove_manager(self, name: str) -> None:
-        """Remove an existing device manager from the cache.
-
-        Args:
-            name (str): the name of the manager to remove
-        """
-        managers = self.managers
-        managers.pop(name, None)
-        managers.pop("NEST")
-        if bool(managers):
-            self.managers = managers
-        else:
-            self.devices_cache.unlink(missing_ok=True)
 
     @property
     def connected(self) -> Device | None:
@@ -103,6 +56,52 @@ class OwLiteDeviceSettings:
             write_text(self.connected_cache, connected.model_dump_json())
         else:
             self.connected_cache.unlink(missing_ok=True)
+
+    @cached_property
+    def devices(self) -> dict[str, Device]:
+        """The dictionary of devices managed by NEST."""
+        tokens = OWLITE_SETTINGS.tokens
+        if not tokens:
+            log.error("Please login using 'owlite login' to connect to NEST devices")  # UX
+            raise LoginError("Not authenticated")
+
+        if (workspace := OWLITE_SETTINGS.current_workspace) is None:
+            log.error("No workspace selected. Please select a workspace")  # UX
+            raise RuntimeError("No workspace selected")
+
+        try:
+            resp = NEST_API_BASE.get(
+                "/devices",
+                params={"workspace_id": workspace.id},
+            )
+        except Exception as err:
+            raise DeviceError(err) from err
+
+        assert isinstance(resp, list)
+
+        return {device["name"]: Device(**device) for device in resp}
+
+    def get_device(self, name: str) -> Device:
+        """Get the device by its name.
+
+        Args:
+            name (str): The name of a device to retrieve.
+
+        Raises:
+            RuntimeError: If no device with the provided name is found.
+
+        Returns:
+            Device: The device with the provided name.
+        """
+        assert self.connected
+        if self.connected.runtime == Runtime.QNN:
+            assert name in get_args(SUPPORTED_QUALCOMM_DEVICES)
+            return Device(name=self.connected.name, runtime=self.connected.runtime, runtime_extra=name)
+
+        if name not in self.devices:
+            log.error(f"No such device: {name}. Available devices are {', '.join(self.devices.keys())}")  # UX
+            raise RuntimeError("Device not found")
+        return self.devices[name]
 
 
 OWLITE_DEVICE_SETTINGS = OwLiteDeviceSettings()

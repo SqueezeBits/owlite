@@ -14,7 +14,7 @@ from ..core.cache.device import Device
 from ..core.cache.workspace import Workspace
 from ..core.constants import FX_CONFIGURATION_FORMAT_VERSION, OWLITE_VERSION
 from ..core.logger import log
-from ..enums import PricePlan
+from ..enums import PricePlan, Runtime
 from ..options import CompressionOptions
 from .baseline import Baseline
 from .benchmarkable import Benchmarkable
@@ -47,7 +47,6 @@ class Experiment(Benchmarkable):
 
     @property
     def url(self) -> str:
-        # TODO (huijong): make this url point to the insight page comparing the experiment against its baseline.
         return self.project.url
 
     @property
@@ -57,6 +56,11 @@ class Experiment(Benchmarkable):
     @property
     def label(self) -> str:
         return "_".join((self.project.name, self.baseline.name, self.name))
+
+    @property
+    def skipped_optimizers(self) -> list[str] | None:
+        """The list of optimizers to be skipped."""
+        return None if self.device.runtime == Runtime.QNN else ["TransposeOptimizer"]
 
     @cached_property
     def config(self) -> CompressionOptions:

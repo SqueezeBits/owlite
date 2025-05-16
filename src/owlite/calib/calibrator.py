@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import Tensor
@@ -44,6 +44,22 @@ class Calibrator(ABC):
             log.error("The quantizer should be disabled during calibration.")
             return False
         return True
+
+    def convert_to_tensor(self, inputs: tuple[Any, ...]) -> torch.Tensor:
+        """Convert the input to a tensor.
+
+        Args:
+            inputs (tuple[Any, ...]): The input to convert. `inputs` must be tuple of a tensor or a scalar.
+
+        Returns:
+            torch.Tensor: The converted tensor.
+        """
+        assert isinstance(inputs, tuple) and len(inputs) == 1, "inputs must be tuple of a tensor or a scalar"
+        _input: torch.Tensor = (
+            inputs[0].clone() if isinstance(inputs[0], torch.Tensor) else torch.tensor(inputs[0], dtype=torch.float32)
+        )
+        self.input_dtype = _input.dtype
+        return _input.float()
 
     def update_fake_quantizer_param_with_max_min(self, max_value: Tensor, min_value: Tensor | None = None) -> None:
         """Find and apply the step_size and zero_points of a quantizer with the given values as min and max.

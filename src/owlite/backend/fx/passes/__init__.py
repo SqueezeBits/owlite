@@ -17,6 +17,7 @@ from .eliminate_explicit_getitem import EliminateExplicitGetitem
 from .eliminate_identity import EliminateIdentity
 from .fix_hard_coded_devices import FixHardCodedDevice
 from .fuse_consecutive_concats import FuseConsecutiveConcats
+from .rewrite_layernorms_functional import RewriteLayerNormsFunctional
 
 PassName = Literal[
     "ConnectSetitemToItsUsers",
@@ -36,4 +37,5 @@ PassName = Literal[
     "EliminateIdentity",
     "FixHardCodedDevice",
     "FuseConsecutiveConcats",
+    "RewriteLayerNormsFunctional",
 ]

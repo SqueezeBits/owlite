@@ -3,7 +3,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, get_args
 
 import torch
 from packaging.version import Version
@@ -14,11 +14,12 @@ from .api import Baseline, Experiment, Project
 from .backend.fx.trace import symbolic_trace
 from .compression import compress
 from .core.cli.device import connect_to_first_available_device
-from .core.constants import OWLITE_REPORT_URL, OWLITE_VERSION
+from .core.constants import OWLITE_REPORT_URL, OWLITE_VERSION, SUPPORTED_QUALCOMM_DEVICES
 from .core.device_settings import OWLITE_DEVICE_SETTINGS
 from .core.github_utils import get_latest_version_from_github
 from .core.logger import log
 from .core.settings import OWLITE_SETTINGS
+from .enums import Runtime
 from .options import DynamicAxisOptions, DynamicInputOptions, ONNXExportOptions
 
 
@@ -728,7 +729,7 @@ def init(
     *,
     duplicate_from: str | None = None,
     description: str | None = None,
-    device: str | None = None,
+    device: str | SUPPORTED_QUALCOMM_DEVICES | None = None,
 ) -> OwLite:
     r"""Initialize the projects, baselines, and/or experiments.
 
@@ -982,43 +983,60 @@ def init(
         log.error("No workspace selected.")  # UX
         raise RuntimeError("Current workspace not found")
 
-    proj: Project = Project.load_or_create(workspace, project, description=description)
-
-    target: Baseline | Experiment
     if OWLITE_DEVICE_SETTINGS.connected is None:
         connect_to_first_available_device()
     assert OWLITE_DEVICE_SETTINGS.connected
-    if device:
-        target_device = OWLITE_DEVICE_SETTINGS.connected.manager.get(device)
-    else:
-        target_device = OWLITE_DEVICE_SETTINGS.connected
-    log.info(f"Device connected: {target_device}")  # UX
+    connected_device = OWLITE_DEVICE_SETTINGS.connected
 
+    supported_qualcomm_devices = get_args(SUPPORTED_QUALCOMM_DEVICES)
+    if connected_device.runtime == Runtime.QNN and device is None:
+        log.error(
+            "Specific device name should be given when using Qualcomm devices. "
+            f"Supported devices are: {' '.join(supported_qualcomm_devices)}"
+        )  # UX
+        raise AssertionError("Device not given")
+
+    if connected_device.runtime == Runtime.QNN and device not in supported_qualcomm_devices:
+        log.error(
+            "Unsupported device, please check again. " f"Supported devices are: {' '.join(supported_qualcomm_devices)}"
+        )  # UX
+        raise ValueError("Unsupported device")
+
+    if device:
+        overridden_device = OWLITE_DEVICE_SETTINGS.get_device(device)
+        if overridden_device.runtime != connected_device.runtime:
+            log.error("Connected device's framework differs from the given one")  # UX
+            raise AssertionError(
+                f"Device framework mismatch: {connected_device.runtime.name} != {overridden_device.runtime.name}"
+            )  # UX
+
+        if connected_device.runtime != Runtime.QNN and overridden_device.name != connected_device.name:
+            log.info("Overriding device")  # UX
+
+        connected_device = overridden_device
+
+    log.info(f"Device connected: {connected_device}")  # UX
+
+    proj: Project = Project.load_or_create(workspace, project, connected_device, description=description)
+    target: Baseline | Experiment
     if experiment is None:
         if duplicate_from:
             log.warning(
                 f"`duplicate_from='{duplicate_from}'` will be ignored as no value for `experiment` was provided"
             )  # UX
-        target = Baseline.create(proj, baseline, target_device)
+        target = Baseline.create(proj, baseline, connected_device)
     else:
-        existing_baseline = Baseline.load(proj, baseline, target_device)
+        existing_baseline = Baseline.load(proj, baseline, connected_device)
         if existing_baseline is None:
             log.error(
                 f"No such baseline: {baseline}. "
                 f"Please check if the baseline name for the experiment '{experiment}' is correct"
             )  # UX
             raise RuntimeError("Baseline not found")
-        if existing_baseline.device.runtime != target_device.runtime:
-            log.error(
-                f"Device runtime mismatched with the baseline's: {experiment}={target_device.runtime.name}, "
-                f"{existing_baseline.name}={existing_baseline.device.runtime.name}"  # pylint: disable=no-member
-                ". Please connect to a device with the same runtime or upload a compatible baseline"
-            )  # UX
-            raise RuntimeError("Runtime mismatch")
         if duplicate_from is None:
-            target = Experiment.load_or_create(existing_baseline, experiment, target_device)
+            target = Experiment.load_or_create(existing_baseline, experiment, connected_device)
         else:
-            existing_experiment = Experiment.load(existing_baseline, duplicate_from, target_device)
+            existing_experiment = Experiment.load(existing_baseline, duplicate_from, connected_device)
             if existing_experiment is None:
                 log.error(
                     f"The experiment '{duplicate_from}' to duplicate from is not found. "
@@ -1026,7 +1044,7 @@ def init(
                 )  # UX
                 raise RuntimeError("Experiment not found")
             target = existing_experiment.clone(experiment)
-        target.device = target_device
+        target.device = connected_device
 
     if isinstance(target, Experiment) and target.device.name != target.baseline.device.name:
         log.warning(

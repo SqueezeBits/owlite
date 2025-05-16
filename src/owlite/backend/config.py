@@ -25,10 +25,43 @@ STRICT_ONNX_FUNCTIONALITY_CHECKING = os.environ.get("OWLITE_STRICT_ONNX_FUNCTION
 
 # [DISCLAIMER] Configurations below are deprecated and may be removed in later versions.
 
-# (deprecated since 2.2.0) ONNX operator types to save input parameters internally during onnx export.
+# (used only for QNN runtime) ONNX operator types to save input parameters internally during onnx export.
 # List entry can be either
 #   1) a operator type in string
 #   2) a tuple of operator type in string and tuple of indices of inputs to store internally
 #
 # When an index tuple is provided, the input parameters not included in the tuple will be stored externally.
-ONNX_OPS_TO_SAVE_PARAMETERS_INTERNALLY: list[tuple[str, list[int]] | str] = []
+ONNX_OPS_TO_SAVE_PARAMETERS_INTERNALLY: list[tuple[str, list[int]] | str] = [
+    "Col2Im",
+    "Compress",
+    "ConstantOfShape",
+    "CumSum",
+    "Expand",
+    ("Gather", [1]),
+    "GatherElements",
+    "GatherND",
+    "GridSample",
+    "Pad",
+    "ReduceL1",
+    "ReduceL2",
+    "ReduceLogSum",
+    "ReduceLogSumExp",
+    "ReduceMax",
+    "ReduceMean",
+    "ReduceMin",
+    "ReduceProd",
+    "ReduceSum",
+    "ReduceSumSquare",
+    "Reshape",
+    "Resize",
+    "Scatter",
+    "ScatterElements",
+    "ScatterND",
+    "Shape",
+    "Slice",
+    "Split",
+    "Squeeze",
+    "Tile",
+    "TopK",
+    "Unsqueeze",
+]

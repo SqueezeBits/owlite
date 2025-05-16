@@ -25,9 +25,10 @@ class RewritePass(PassBase):
                     len(existing_node.replace_all_uses_with(rewritten_node)) > 0
                     for existing_node, rewritten_node in replacement_map.items()
                 ]
-                modified = modified or any(is_replaced)
-                graph.eliminate_dead_code()
-                graph.lint()
+                modified_here = any(is_replaced)
+                modified = modified or modified_here
+                if modified_here:
+                    graph.eliminate_dead_code()
 
         return PassResult(graph_module, modified)
 

@@ -22,6 +22,7 @@ from .passes import (
     FixHardCodedDevice,
     FuseConsecutiveConcats,
     PassName,
+    RewriteLayerNormsFunctional,
 )
 
 
@@ -83,6 +84,7 @@ def get_pass_manager(skipped_optimizers: list[PassName] | None = None) -> PassMa
         DecomposeExpm1,
         DecomposeSiLU,
         FuseConsecutiveConcats,
+        RewriteLayerNormsFunctional,
     )
 
     for fx_pass in (

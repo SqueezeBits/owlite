@@ -6,9 +6,11 @@ from requests.exceptions import HTTPError
 from typing_extensions import Self
 
 from ..core.api_base import MAIN_API_BASE
+from ..core.cache.device import Device
 from ..core.cache.workspace import Workspace
 from ..core.constants import OWLITE_FRONT_BASE_URL, OWLITE_HOME_PATH
 from ..core.logger import log
+from ..enums import Runtime
 
 if TYPE_CHECKING:
     from .baseline import Baseline
@@ -34,12 +36,13 @@ class Project:
         return str(OWLITE_HOME_PATH / self.name)
 
     @classmethod
-    def create(cls, workspace: Workspace, name: str, description: str | None = None) -> Self:
+    def create(cls, workspace: Workspace, name: str, device: Device, description: str | None = None) -> Self:
         """Create a new project.
 
         Args:
             workspace (Workspace): The workspace to create the project in
             name (str): The name for the project to be created
+            device (Device): The currently connected device.
             description (str | None, optional): Optional description for the project. Defaults to None.
 
         Raises:
@@ -56,6 +59,7 @@ class Project:
                 "workspace_id": workspace.id,
                 "project_name": name,
                 "description": description,
+                "framework": device.runtime.value,
             },
         )
 
@@ -67,12 +71,13 @@ class Project:
         return project
 
     @classmethod
-    def load_or_create(cls, workspace: Workspace, name: str, description: str | None = None) -> Self:
+    def load_or_create(cls, workspace: Workspace, name: str, device: Device, description: str | None = None) -> Self:
         """Load the existing project named `name` if found, creates a new one otherwise.
 
         Args:
             workspace (Workspace): The workspace to load the project in
             name (str): The name of the project to be loaded or created
+            device (Device): The currently connected device.
             description (str | None, optional): Optional description that will be used only when a new project is
                 created. Defaults to None.
 
@@ -83,13 +88,19 @@ class Project:
             Project: the loaded or created project
         """
         try:
-            return cls.create(workspace, name, description)
+            return cls.create(workspace, name, device, description)
         except HTTPError as e:
             if e.response is not None and e.response.status_code == 409:  # the project already exists
                 data = json.loads(e.response.content)
                 assert (
-                    data["detail"]["existing_project_name"] == name
-                ), f"Project name mismatch: {data['detail']['existing_project_name']} != {name}"
+                    existing_name := data["detail"]["existing_project_name"]
+                ) == name, f"Project name mismatch: {existing_name} != {name}"  # UX
+
+                if (existing_framework := data["detail"]["existing_project_framework"]) != device.runtime.value:
+                    raise AssertionError(
+                        f"Project framework mismatch: {Runtime(existing_framework).name} != {device.runtime.name}"
+                    ) from e  # UX
+
                 project = cls(workspace, data["detail"]["existing_project_id"], name)
                 log.info(f"Loaded the existing {project}")  # UX
                 return project

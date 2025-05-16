@@ -51,9 +51,7 @@ class MinmaxCalibrator(Calibrator):
                 raise ValueError(
                     "During calibration, calibration attributions should be initialized, but None was provided"
                 )
-            _input: torch.Tensor = inputs[0].clone()
-            calibrator.input_dtype = _input.dtype
-            _input = _input.float()
+            _input = self.convert_to_tensor(inputs)
             if module.channel is not None:
                 axis = module.channel.axis
                 (other_dims := list(range(_input.dim()))).remove(axis)

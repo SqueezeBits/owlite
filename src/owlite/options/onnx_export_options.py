@@ -35,6 +35,9 @@ class ONNXExportOptions(BaseModel):
                 )  # UX
                 return cls(opset_version=13)
 
+            case Runtime.QNN:
+                return cls()
+
             case _:
                 log.warning("Unknown device, using default ONNX export options")  # UX
                 return cls()

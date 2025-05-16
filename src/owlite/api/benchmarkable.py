@@ -3,6 +3,7 @@ import os
 import signal
 import sys
 import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields
 from functools import cached_property
 from typing import Any
@@ -15,23 +16,17 @@ from torch.fx.graph_module import GraphModule
 from ..backend.config import ONNX_OPS_TO_SAVE_PARAMETERS_INTERNALLY
 from ..backend.onnx.export import export
 from ..backend.signature import Signature
-from ..core.api_base import MAIN_API_BASE, APIBase
+from ..core.api_base import MAIN_API_BASE, NEST_API_BASE
 from ..core.cache.device import Device
 from ..core.cache.workspace import Workspace
 from ..core.cli.api.login import whoami
 from ..core.constants import OWLITE_API_DEFAULT_TIMEOUT, OWLITE_REPORT_URL, OWLITE_VERSION
-from ..core.device_settings import OWLITE_DEVICE_SETTINGS
 from ..core.logger import log
-from ..core.settings import OWLITE_SETTINGS
 from ..enums.benchmark_status import BenchmarkStatus
 from ..enums.price_plan import PricePlan
+from ..enums.runtime import Runtime
 from ..options import DynamicAxisOptions, ONNXExportOptions
 from .utils import download_file_from_url, upload_file_to_url
-
-DEVICE_API_BASE: APIBase = APIBase(
-    OWLITE_DEVICE_SETTINGS.connected.manager.url if OWLITE_DEVICE_SETTINGS.connected else OWLITE_SETTINGS.base_url.NEST,
-    "OWLITE_DEVICE_API_BASE",
-)
 
 
 @dataclass
@@ -45,41 +40,46 @@ class BenchmarkResult:
 
 
 @dataclass
-class Benchmarkable:
+class Benchmarkable(ABC):
     """Base protocol for objects that can request a benchmark."""
 
     name: str
     device: Device
 
     @property
+    @abstractmethod
     def workspace(self) -> Workspace:
         """The workspace of the current project."""
-        raise NotImplementedError()
 
     @cached_property
+    @abstractmethod
     def plan(self) -> PricePlan:
         """Pricing plan of current user."""
-        raise NotImplementedError()
 
     @property
+    @abstractmethod
     def input_signature(self) -> Signature | None:
         """Input signature of model."""
-        raise NotImplementedError()
 
     @property
+    @abstractmethod
     def url(self) -> str:
         """The URL to the relevant page for this object."""
-        raise NotImplementedError()
 
     @property
+    @abstractmethod
     def home(self) -> str:
         """The directory path for writing outputs produced by this object."""
-        raise NotImplementedError()
 
     @property
+    @abstractmethod
     def label(self) -> str:
         """A unique label for this object."""
-        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def skipped_optimizers(self) -> list[str] | None:
+        """The list of optimizers to be skipped."""
 
     @property
     def onnx_path(self) -> str:
@@ -93,8 +93,8 @@ class Benchmarkable:
 
     @property
     def engine_path(self) -> str:
-        """The file path for writing the engine."""
-        return os.path.join(self.home, f"{self.label}.engine")
+        """The file path for writing the result."""
+        return os.path.join(self.home, f"{self.label}.{self.device.runtime.file_ext}")
 
     @property
     def version_payload(self) -> dict[str, str]:
@@ -149,17 +149,23 @@ class Benchmarkable:
             self.input_signature.mark_dynamic_axes(dynamic_axis_options)
         if onnx_export_options is None:
             onnx_export_options = ONNXExportOptions.create(self.device)
+        print(f"skipped_optimizers: {self.skipped_optimizers}")
         export(
             model,
             (*args, kwargs),
             self.onnx_path,
+            self.bin_path,
             dynamic_axis_options=dynamic_axis_options,
-            ops_to_save_parameter_internally=ONNX_OPS_TO_SAVE_PARAMETERS_INTERNALLY if self.plan.paid else [],
+            ops_to_save_parameter_internally=(
+                ONNX_OPS_TO_SAVE_PARAMETERS_INTERNALLY if self.device.runtime == Runtime.QNN else []
+            ),
+            skipped_optimizers=self.skipped_optimizers,
             **(onnx_export_options.model_dump()),
         )
         log.info(f"{type(self).__name__} ONNX saved at {self.onnx_path}")  # UX
         return onnx.load(self.onnx_path, load_external_data=False)
 
+    @abstractmethod
     def upload(
         self,
         proto: onnx.ModelProto,
@@ -171,7 +177,6 @@ class Benchmarkable:
             proto (onnx.ModelProto): ONNX proto of a model
             model (GraphModule): A model converted into a graph module
         """
-        raise NotImplementedError()
 
     def orchestrate_benchmark(self, download_engine: bool = True) -> None:
         """Orchestrate the end-to-end benchmark pipeline.
@@ -211,7 +216,7 @@ class Benchmarkable:
             ValueError: When device is not set.
             HTTPError: When request was not successful.
         """
-        resp = DEVICE_API_BASE.post("/devices/jobs/assign", json=self.benchmark_payload())
+        resp = NEST_API_BASE.post("/devices/jobs/assign", json=self.benchmark_payload())
         assert isinstance(resp, str)
         self.log_benchmark_priority()
         log.debug(f"request_benchmark received {resp}")
@@ -225,7 +230,7 @@ class Benchmarkable:
         Raises:
             HTTPError: When request was not successful.
         """
-        res = DEVICE_API_BASE.post("/devices/jobs/queue", json=self.benchmark_payload())
+        res = NEST_API_BASE.post("/devices/jobs/queue", json=self.benchmark_payload())
         assert isinstance(res, dict)
         log.debug(f"get_benchmark_queue received {res}")
 
@@ -255,7 +260,7 @@ class Benchmarkable:
         Raises:
             HTTPError: When request was not successful.
         """
-        res = DEVICE_API_BASE.post(
+        res = NEST_API_BASE.post(
             "/devices/jobs/abort",
             json=self.benchmark_payload(),
         )
@@ -397,7 +402,7 @@ class Benchmarkable:
             HTTPError: When request was not successful.
         """
         try:
-            resp = DEVICE_API_BASE.post("/devices/trt", json=self.benchmark_payload())
+            resp = NEST_API_BASE.post("/devices/trt", json=self.benchmark_payload())
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code == 404:
                 log.error(
@@ -411,7 +416,7 @@ class Benchmarkable:
     def clear_engine(self) -> None:
         """Clear created the engine on device."""
         log.debug(f"Clear the engine on device: {self.device}, benchmark_key: {self.benchmark_key}")
-        resp = DEVICE_API_BASE.post("/devices/clear", json=self.benchmark_payload())
+        resp = NEST_API_BASE.post("/devices/clear", json=self.benchmark_payload())
         assert isinstance(resp, str)
         if len(resp) > 0:
             log.debug(f"Clear the engine with url: {resp}")
@@ -449,9 +454,9 @@ class Benchmarkable:
             )  # UX
             log.info(f"Remaining quota: {20 - priority_queues_count}/20")  # UX
 
+    @abstractmethod
     def payload(self, **kwargs: str | int) -> dict[str, str | int]:
         """Create payload for API requests."""
-        raise NotImplementedError()
 
     def benchmark_payload(self, **kwargs: str | int) -> dict[str, str | int]:
         """Create benchmark payload for API requests."""
@@ -460,8 +465,8 @@ class Benchmarkable:
             "device_name": self.device.name,
             "benchmark_key": self.benchmark_key,
         }
+        if self.device.runtime == Runtime.QNN:
+            assert self.device.runtime_extra
+            p["qualcomm_device_name"] = self.device.runtime_extra
         p.update(kwargs)
         return p
-
-    def __str__(self) -> str:
-        raise NotImplementedError()

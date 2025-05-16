@@ -256,9 +256,6 @@ def export(
     if not isinstance(f, str):
         raise TypeError("owlite.onnx.export requires the argument `f` to be a string.")
 
-    if ops_to_save_parameter_internally and len(ops_to_save_parameter_internally):
-        log.warning("Saving parameters internally might cause unexpected error as it is deprecated since v2.2.0")
-
     if module.training:
         log.warning("Exporting a module in training mode to ONNX might corrupt the functionality")  # UX
 
@@ -341,10 +338,10 @@ def export(
     log.info(f"Saving exported ONNX proto at {f} with external data {location}")  # UX
     if model_dir:
         os.makedirs(model_dir, exist_ok=True)
-    if abs_location is not None and os.path.isfile(abs_location):
-        log.warning(f"External data file at {abs_location} will be overwritten.")  # UX
+    if abs_location is not None and os.path.isfile(location):
+        log.warning(f"External data file at {location} will be overwritten.")  # UX
         # os.remove is required since export_to_onnx_with_external_data opens the external data file with mode='r+b'
-        os.remove(abs_location)
+        os.remove(location)
 
     export_with_external_data(
         onnx_proto,
