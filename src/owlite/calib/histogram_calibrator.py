@@ -27,11 +27,11 @@ class HistogramCalibrator(Calibrator, ABC):
         super().__init__(quantizer)
         self.histograms: list[torch.Tensor] = []
         self.bin_edges: list[torch.Tensor] = []
-        self.lock: Lock = Lock()
+        self.lock: Lock
 
     def prepare(self) -> RemovableHandle:
         """Prepare forward hook function."""
-
+        self.lock = Lock()
         def histogram_forward_hook_func(module: "FakeQuantizer", inputs: tuple[Any, ...], output: Any) -> Any | None:
             """Forward hook function to get histogram value."""
             assert isinstance(module.calibrator, HistogramCalibrator)
@@ -112,6 +112,9 @@ class HistogramCalibrator(Calibrator, ABC):
         # remove registered forward_hook
         self.hook_handler.remove()
         self.hook_handler = None
+
+        #remove threading lock
+        del self.lock
 
 
 def _accumulate_input_to_abs_histogram(calibrator: HistogramCalibrator, inputs: list[torch.Tensor]) -> None:

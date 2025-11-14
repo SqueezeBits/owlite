@@ -14,7 +14,7 @@ from ..core.cache.device import Device
 from ..core.cache.workspace import Workspace
 from ..core.constants import FX_CONFIGURATION_FORMAT_VERSION, OWLITE_VERSION
 from ..core.logger import log
-from ..enums import PricePlan, Runtime
+from ..enums import PricePlan
 from ..options import CompressionOptions
 from .baseline import Baseline
 from .benchmarkable import Benchmarkable
@@ -60,7 +60,7 @@ class Experiment(Benchmarkable):
     @property
     def skipped_optimizers(self) -> list[str] | None:
         """The list of optimizers to be skipped."""
-        return None if self.device.runtime == Runtime.QNN else ["TransposeOptimizer"]
+        return None
 
     @cached_property
     def config(self) -> CompressionOptions:

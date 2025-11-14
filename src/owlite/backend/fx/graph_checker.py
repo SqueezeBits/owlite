@@ -144,6 +144,11 @@ def is_foreign_function(target: TorchTarget, module: ModuleType | None) -> TypeG
     ):
         return False
 
+    if "2.8" <= torch.__version__ < "2.9" and isinstance(
+        target, torch._functorch.autograd_function.AutogradFunctionApply
+    ):
+        return False
+
     if inspect.isclass(target) and issubclass(target, torch.nn.Module):
         if module is None:
             log.error(
@@ -161,7 +166,7 @@ def is_foreign_function(target: TorchTarget, module: ModuleType | None) -> TypeG
             from torch._dynamo import trace_rules, variables
 
             is_allowed_in_graph = (  # pylint: disable-next=no-member
-                trace_rules.lookup_callable(target) == variables.TorchInGraphFunctionVariable  # type: ignore
+                trace_rules.lookup_callable(target) == variables.TorchInGraphFunctionVariable
                 or trace_rules.lookup(target) == variables.TorchInGraphFunctionVariable
             )
 
@@ -214,6 +219,10 @@ def is_trampoline_autograd_apply(target: TorchTarget, module: ModuleType | None)
             )
         case _ if "2.3" <= torch_version < "2.5":
             is_autograd_apply_target = target is torch._functorch.autograd_function.autograd_function_apply
+        case _ if "2.5" <= torch_version < "2.8":
+            is_autograd_apply_target = target is torch.autograd.function.FunctionCtx
+        case _ if "2.8" <= torch_version < "2.9":
+            is_autograd_apply_target = isinstance(target, torch._functorch.autograd_function.AutogradFunctionApply)
         case _:
             raise RuntimeError(f"PyTorch {torch_version} is not supported by OwLite")
 

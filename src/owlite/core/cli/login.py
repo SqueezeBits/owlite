@@ -8,6 +8,7 @@ from getpass import getpass
 
 from ..cache.tokens import Tokens
 from ..cache.workspace import Workspace
+from ..device_settings import OWLITE_DEVICE_SETTINGS
 from ..logger import log
 from ..settings import OWLITE_SETTINGS
 from .api.login import login as _login
@@ -56,6 +57,7 @@ def login() -> None:
             return False
         return True
 
+    logout(verbose=False)
     email = input("Enter your email: ")  # UX
     if not _is_valid_email(email):
         return
@@ -76,8 +78,14 @@ def login() -> None:
     log.debug(f"Saved tokens: \n\t\taccess token= '{tokens.access_token}'\n\t\trefresh token= '{tokens.refresh_token}'")
 
 
-def logout() -> None:
-    """Logout from OwLite, tokens are deleted from the machine."""
+def logout(verbose: bool = True) -> None:
+    """Logout from OwLite, tokens are deleted from the machine.
+
+    Args:
+        verbose (bool): Whether to print log messages, defaults to True.
+    """
     OWLITE_SETTINGS.tokens = None
+    OWLITE_DEVICE_SETTINGS.connected = None
     OWLITE_SETTINGS.current_workspace = None
-    log.info("Successfully logged out")  # UX
+    if verbose:
+        log.info("Successfully logged out")  # UX

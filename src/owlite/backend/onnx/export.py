@@ -338,10 +338,10 @@ def export(
     log.info(f"Saving exported ONNX proto at {f} with external data {location}")  # UX
     if model_dir:
         os.makedirs(model_dir, exist_ok=True)
-    if abs_location is not None and os.path.isfile(location):
+    if abs_location is not None and os.path.isfile(abs_location):
         log.warning(f"External data file at {location} will be overwritten.")  # UX
         # os.remove is required since export_to_onnx_with_external_data opens the external data file with mode='r+b'
-        os.remove(location)
+        os.remove(abs_location)
 
     export_with_external_data(
         onnx_proto,
@@ -374,15 +374,15 @@ def _export(
         log.debug("Running torch.onnx.export")
         torch.onnx.export(
             module,
-            args=args,
-            f=f,
+            args=args,  # type: ignore[arg-type]
+            f=f,  # type: ignore[arg-type]
             export_params=export_params,
             verbose=verbose,
             training=training,
             operator_export_type=operator_export_type,
             opset_version=opset_version,
             do_constant_folding=do_constant_folding,
-            keep_initializers_as_inputs=keep_initializers_as_inputs,
+            keep_initializers_as_inputs=keep_initializers_as_inputs or False,
             custom_opsets=custom_opsets,
             export_modules_as_functions=export_modules_as_functions,
         )
@@ -403,7 +403,7 @@ def _export(
                 model_proto,
                 check_n=check_n,
             )
-        return optimized_proto
+        return _run_shape_inference(optimized_proto)
 
 
 # pylint: disable-next=too-many-arguments, too-many-locals, too-many-positional-arguments
@@ -430,7 +430,7 @@ def _export_path(
         input_path = os.path.join(tempdir, "model.onnx")
         torch.onnx.export(
             module,
-            args=args,
+            args=args,  # type: ignore[arg-type]
             f=input_path,
             export_params=export_params,
             verbose=verbose,
@@ -438,7 +438,7 @@ def _export_path(
             operator_export_type=operator_export_type,
             opset_version=opset_version,
             do_constant_folding=do_constant_folding,
-            keep_initializers_as_inputs=keep_initializers_as_inputs,
+            keep_initializers_as_inputs=keep_initializers_as_inputs or False,
             custom_opsets=custom_opsets,
             export_modules_as_functions=export_modules_as_functions,
         )
@@ -466,8 +466,11 @@ def _export_path(
                 input_path,
                 check_n=check_n,
             )
-        log.debug(f"Loading ONNX proto from {optimized_onnx_path}")
-        return onnx.load(optimized_onnx_path)
+        typed_optimized_onnx_path = _run_shape_inference_path(
+            optimized_onnx_path, os.path.join(tempdir, "typed_optimized_model.onnx")
+        )
+        log.debug(f"Loading ONNX proto from {typed_optimized_onnx_path}")
+        return onnx.load(typed_optimized_onnx_path)
 
 
 def name_anonymous_nodes(onnx_proto: ModelProto) -> ModelProto:

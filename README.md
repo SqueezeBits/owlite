@@ -15,7 +15,7 @@
   <a href="https://squeezebits.gitbook.io/owlite/quick/readme"><img src="https://img.shields.io/badge/Documentation-FFA32C" /></a>
 
   <a href="https://github.com/SqueezeBits/owlite#installation"><img src="https://img.shields.io/badge/python->=3.10, <3.13-blue" /></a>
-  <a><img src="https://img.shields.io/badge/pytorch->=2.1.2<2.5-blue" /></a>
+  <a><img src="https://img.shields.io/badge/pytorch->=2.2<2.9-blue" /></a>
   <a href="https://github.com/SqueezeBits/owlite/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-APGL--3.0-lightgray" /></a>
 </p>    
 </div>
@@ -55,6 +55,22 @@ Using pip (Recommended)
 ```bash
 pip install owlite --extra-index-url https://pypi.squeezebits.com/
 ```
+
+## Version Compatibilities
+
+OwLite has been validated with the following combinations of versions. Versions not listed below may exhibit unexpected behavior.
+
+### v2.6.0
+
+| torch | torchvision | diffusers | transformers |
+| :---: | :---------: | :-------: | :----------: |
+| 2.8.0 | 0.23.0      | 0.34.0    | 4.50.0       |
+| 2.7.1 | 0.22.1      | 0.33.0    | 4.48.0       |
+| 2.6.0 | 0.21.0      | 0.32.0    | 4.46.0       |
+| 2.5.1 | 0.20.1      | 0.30.0    | 4.44.0       |
+| 2.4.1 | 0.19.1      | 0.28.0    | 4.42.0       |
+| 2.3.1 | 0.18.1      | 0.26.0    | 4.40.0       |
+| 2.2.2 | 0.17.2      | 0.24.0    | 4.38.0       |
 
 ## Getting Started
 

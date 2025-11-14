@@ -7,9 +7,9 @@ name="owlite"
 dynamic = ["version"]
 description = "OwLite - No-Code AI compression Toolkit"
 dependencies = [
-  "onnx>=1.15, <1.17",
-  "torch>=2.1.2,<2.5",
-  "onnxruntime>=1.17, <1.21",
+  "onnx>=1.15, <1.18",
+  "torch>=2.2,<2.9",
+  "onnxruntime>=1.17, <1.23",
   "colored",
   "yacs",
   "tabulate",
@@ -17,7 +17,7 @@ dependencies = [
   "tqdm",
   "pydantic",
   "lazy_imports",
-  "numpy<2.0.0",
+  "numpy",
 ]
 authors = [
   {name = "SqueezeBits.inc", email = "owlite@squeezebits.com"}
@@ -25,7 +25,7 @@ authors = [
 maintainers = [
   {name = "SqueezeBits.inc", email = "owlite@squeezebits.com"}
 ]
-requires-python = ">=3.10, <3.13"
+requires-python = ">=3.10, <3.14"
 keywords=["torch", "onnx", "graph", "quantization"]
 classifiers=[
   "Intended Audience :: Developers",
@@ -36,6 +36,7 @@ classifiers=[
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Software Development",

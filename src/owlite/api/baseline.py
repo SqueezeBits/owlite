@@ -59,7 +59,7 @@ class Baseline(Benchmarkable):
     @property
     def skipped_optimizers(self) -> list[str] | None:
         """The list of optimizers to be skipped."""
-        return ["TransposeOptimizer"]
+        return None
 
     @classmethod
     def create(cls, project: Project, name: str, device: Device) -> Self:

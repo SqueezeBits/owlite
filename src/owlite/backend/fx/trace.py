@@ -11,10 +11,13 @@ from ...enums import ModelStatus
 from ..signature import Signature
 from .graph_checker import validate_procedure_calls
 from .optimize import optimize
+from .passes import PassName
 
 
 # pylint: disable-next=too-many-locals
-def symbolic_trace(model: torch.nn.Module, *args: Any, **kwargs: Any) -> GraphModule:
+def symbolic_trace(
+    model: torch.nn.Module, *args: Any, **kwargs: Any
+) -> GraphModule:
     """Symbolically trace the input `model` to convert it into a GraphModule.
 
     In order for the tracing to be successful, the `model` must be able to pass `torch.compile(model, fullgraph=True)`.

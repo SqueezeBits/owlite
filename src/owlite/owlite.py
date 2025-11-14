@@ -11,6 +11,7 @@ from torch.fx.graph_module import GraphModule
 from torch.nn.parallel import DataParallel, DistributedDataParallel
 
 from .api import Baseline, Experiment, Project
+from .backend.fx.passes import PassName
 from .backend.fx.trace import symbolic_trace
 from .compression import compress
 from .core.cli.device import connect_to_first_available_device
@@ -666,10 +667,11 @@ class OwLite:
             and self.target.input_signature.is_dynamic
         ):
             if dynamic_input_options is None:
-                log.error(
+                msg = (
                     "The `dynamic_input_options` for the experiment has `dynamic_input_options`. "
                     "Try `owl.benchmark(dynamic_input_options={...})`"
-                )  # UX
+                )
+                log.error(msg)  # UX
                 raise RuntimeError("Missing Dynamic input options")
 
             dynamic_input_options = DynamicInputOptions(dynamic_input_options)

@@ -30,6 +30,11 @@ class FixHardCodedDevice(PassBase):
             canary = graph.get_attr("sqzb_module_device_canary")
             canary_device = graph.call_function(getattr, (canary, "device"))
             graph_module.meta["canary_device_node"] = canary_device
+            # hack to avoid this node from being cleaned up
+            output_node = graph.find_nodes(op="output")
+            assert len(output_node) == 1
+            output_node = output_node[0]
+            output_node.args = output_node.args + (canary_device,)
 
         for node in graph.nodes:
             if node.kwargs.get("device", None) is not None:

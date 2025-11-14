@@ -5,6 +5,7 @@ import torch
 from torch import Tensor
 from torch.autograd import Function
 
+from ...core.logger import log
 from .fake_quantize import BaseFakeINTQuantizeFunction, fake_quantize
 
 
@@ -26,7 +27,8 @@ class ScaledRoundSTE(Function):
     def forward(ctx: Any, inputs: Tensor, scale: Tensor | float = 1.0) -> Any:
         rounded_input = (inputs / scale).round()
         if any(rounded_input > torch.iinfo(torch.int32).max) or any(rounded_input < torch.iinfo(torch.int32).min):
-            raise OverflowError("Rounded input is out of bounds")
+            rounded_input = torch.clamp(rounded_input, torch.iinfo(torch.int32).min, torch.iinfo(torch.int32).max)
+            log.debug_warning("Rounded input is out of bounds")
         return rounded_input * scale
 
     @staticmethod

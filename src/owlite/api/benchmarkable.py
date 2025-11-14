@@ -154,7 +154,6 @@ class Benchmarkable(ABC):
             model,
             (*args, kwargs),
             self.onnx_path,
-            self.bin_path,
             dynamic_axis_options=dynamic_axis_options,
             ops_to_save_parameter_internally=(
                 ONNX_OPS_TO_SAVE_PARAMETERS_INTERNALLY if self.device.runtime == Runtime.QNN else []

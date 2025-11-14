@@ -99,7 +99,7 @@ class Project:
                 if (existing_framework := data["detail"]["existing_project_framework"]) != device.runtime.value:
                     raise AssertionError(
                         f"Project framework mismatch: {Runtime(existing_framework).name} != {device.runtime.name}"
-                    ) from e  # UX
+                    ) from None  # UX
 
                 project = cls(workspace, data["detail"]["existing_project_id"], name)
                 log.info(f"Loaded the existing {project}")  # UX

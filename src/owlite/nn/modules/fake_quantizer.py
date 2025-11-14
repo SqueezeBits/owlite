@@ -322,7 +322,7 @@ class FakeQuantizer(torch.nn.Module, ABC):
             torch.Tensor: the fake-quantized tensor if this fake quantizer is enabled, the unchanged input otherwise.
         """
         if not isinstance(data, torch.Tensor):
-            data = torch.tensor(data, dtype=torch.float32)
+            data = torch.tensor(data, dtype=torch.float32, device=self.step_size.device)
 
         if not self.is_enabled:
             return data
@@ -452,7 +452,7 @@ class FakePerChannelINTQuantizer(FakeINTQuantizer, PerChannelMixin):
 
     def forward(self, data: Any) -> torch.Tensor:
         if not isinstance(data, torch.Tensor):
-            data = torch.tensor(data, dtype=torch.float32)
+            data = torch.tensor(data, dtype=torch.float32, device=self.step_size.device)
 
         if self.is_enabled and not (
             self.channel.axis < data.ndim and self.channel.size == data.shape[self.channel.axis]
@@ -600,7 +600,7 @@ class FakePerChannelFPQuantizer(FakeFPQuantizer, PerChannelMixin):
 
     def forward(self, data: Any) -> torch.Tensor:
         if not isinstance(data, torch.Tensor):
-            data = torch.tensor(data, dtype=torch.float32)
+            data = torch.tensor(data, dtype=torch.float32, device=self.step_size.device)
 
         if self.is_enabled and not (
             self.channel.axis < data.ndim and self.channel.size == data.shape[self.channel.axis]

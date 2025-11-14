@@ -6,6 +6,7 @@ from ..config import FX_TRANSFORM_MAXIMUM_ITERATION
 from .passes import (
     ConnectInplaceOpsToUsers,
     DecomposeExpm1,
+    # DecomposeGELU,
     DecomposeInProjection,
     DecomposeInProjectionPacked,
     DecomposeMultiheadAttention,
@@ -17,8 +18,10 @@ from .passes import (
     DecomposeTransformerDecoderLayer,
     DecomposeTransformerEncoder,
     DecomposeTransformerEncoderLayer,
+    EliminateDummyOutput,
     EliminateExplicitGetitem,
     EliminateIdentity,
+    EliminateNopGetitem,
     FixHardCodedDevice,
     FuseConsecutiveConcats,
     PassName,
@@ -83,8 +86,10 @@ def get_pass_manager(skipped_optimizers: list[PassName] | None = None) -> PassMa
     other_rewrite_passes = (
         DecomposeExpm1,
         DecomposeSiLU,
+        EliminateNopGetitem,
         FuseConsecutiveConcats,
         RewriteLayerNormsFunctional,
+        EliminateDummyOutput,
     )
 
     for fx_pass in (

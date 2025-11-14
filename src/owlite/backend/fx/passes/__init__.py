@@ -13,8 +13,10 @@ from .decompose_transformer_decoder import DecomposeTransformerDecoder
 from .decompose_transformer_decoder_layer import DecomposeTransformerDecoderLayer
 from .decompose_transformer_encoder import DecomposeTransformerEncoder
 from .decompose_transformer_encoder_layer import DecomposeTransformerEncoderLayer
+from .eliminate_dummy_output import EliminateDummyOutput
 from .eliminate_explicit_getitem import EliminateExplicitGetitem
 from .eliminate_identity import EliminateIdentity
+from .eliminate_nop_getitem import EliminateNopGetitem
 from .fix_hard_coded_devices import FixHardCodedDevice
 from .fuse_consecutive_concats import FuseConsecutiveConcats
 from .rewrite_layernorms_functional import RewriteLayerNormsFunctional
@@ -33,8 +35,10 @@ PassName = Literal[
     "DecomposeTransformerEncoderLayer",
     "DecomposeTransformerDecoder",
     "DecomposeTransformerDecoderLayer",
+    "EliminateDummyOutput",
     "EliminateExplicitGetitem",
     "EliminateIdentity",
+    "EliminateNopGetitem",
     "FixHardCodedDevice",
     "FuseConsecutiveConcats",
     "RewriteLayerNormsFunctional",
